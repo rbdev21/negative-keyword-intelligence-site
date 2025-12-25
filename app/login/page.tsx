@@ -4,7 +4,7 @@ import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 
-export default function SignupPage() {
+export default function LoginPage() {
   const supabase = createClient();
   const router = useRouter();
 
@@ -18,19 +18,18 @@ export default function SignupPage() {
     setLoading(true);
     setMsg(null);
 
-    const { error } = await supabase.auth.signUp({ email, password });
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
 
     setLoading(false);
 
     if (error) return setMsg(error.message);
-    setMsg("Account created. You can log in now.");
-    router.push("/login");
+    router.push("/account");
   }
 
   return (
     <main className="mx-auto max-w-md px-6 py-16">
-      <h1 className="text-3xl font-semibold">Create your account</h1>
-      <p className="mt-2 text-sm text-neutral-500">Start your free trial.</p>
+      <h1 className="text-3xl font-semibold">Log in</h1>
+      <p className="mt-2 text-sm text-neutral-500">Welcome back.</p>
 
       <form onSubmit={onSubmit} className="mt-8 space-y-4">
         <input
@@ -54,7 +53,7 @@ export default function SignupPage() {
           className="w-full rounded-lg bg-black px-4 py-3 text-white disabled:opacity-60"
           disabled={loading}
         >
-          {loading ? "Creating..." : "Create account"}
+          {loading ? "Logging in..." : "Log in"}
         </button>
 
         {msg && <p className="text-sm text-neutral-700">{msg}</p>}
