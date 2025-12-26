@@ -21,9 +21,6 @@ type ApiResponse = {
   results?: Record<string, any>[];
 };
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_TERMTIDY_API_URL || "http://127.0.0.1:8000";
-
 function LogoMark() {
   return (
     <div className="flex items-center gap-3">
@@ -37,14 +34,17 @@ function LogoMark() {
 function SectionCard({
   title,
   children,
+  right,
 }: {
   title: string;
   children: React.ReactNode;
+  right?: React.ReactNode;
 }) {
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-base font-semibold text-zinc-900">{title}</h2>
+        {right ? <div>{right}</div> : null}
       </div>
       <div className="mt-4">{children}</div>
     </div>
@@ -60,9 +60,9 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-// --------- helpers ----------
+// ---------- helpers ----------
 function parseCsv(text: string): Record<string, any>[] {
-  // very simple CSV parser good enough for dev (no quoted commas handling)
+  // basic CSV parser (good enough for now)
   const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
   if (lines.length < 2) return [];
 
@@ -82,6 +82,33 @@ function formatGBP(n?: number) {
   return `£${v.toFixed(2)}`;
 }
 
+function downloadCsv(filename: string, rows: Record<string, any>[]) {
+  if (!rows || rows.length === 0) return;
+
+  const headers = Object.keys(rows[0]);
+  const escape = (val: any) => {
+    const s = String(val ?? "");
+    // quote if contains commas/quotes/newlines
+    if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+
+  const csv = [
+    headers.join(","),
+    ...rows.map((r) => headers.map((h) => escape(r[h])).join(",")),
+  ].join("\n");
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+
+  URL.revokeObjectURL(url);
+}
+
 export default function AppPage() {
   const [searchFile, setSearchFile] = useState<File | null>(null);
   const [keywordsFile, setKeywordsFile] = useState<File | null>(null);
@@ -91,7 +118,6 @@ export default function AppPage() {
   const [similarity, setSimilarity] = useState(0.75);
   const [useLLM, setUseLLM] = useState(true);
   const [batchSize, setBatchSize] = useState(5);
-
   const [brandTerms, setBrandTerms] = useState("");
 
   const [loading, setLoading] = useState(false);
@@ -101,15 +127,21 @@ export default function AppPage() {
   const stats = resp?.stats ?? {};
 
   const top5 = useMemo(() => {
-    // show top 5 by cost if cost exists
     const rows = [...results];
     rows.sort((a, b) => Number(b.cost || 0) - Number(a.cost || 0));
     return rows.slice(0, 5);
   }, [results]);
 
-  async function readFileAsText(file: File): Promise<string> {
-    return await file.text();
-  }
+  const exportRows = useMemo(() => {
+    // client-ready export for Google Ads negative keyword upload
+    // Keep it simple: Campaign, Ad group, Negative keyword
+    // (Exact match already formatted like [search term] in suggested_negative)
+    return results.map((r) => ({
+      Campaign: r.campaign ?? "",
+      "Ad group": r.ad_group ?? "",
+      "Negative keyword": r.suggested_negative ?? "",
+    }));
+  }, [results]);
 
   async function runAudit() {
     setResp(null);
@@ -124,18 +156,16 @@ export default function AppPage() {
     }
 
     setLoading(true);
+
     try {
       const [searchText, keywordText] = await Promise.all([
-        readFileAsText(searchFile),
-        readFileAsText(keywordsFile),
+        searchFile.text(),
+        keywordsFile.text(),
       ]);
 
-      const search_terms = parseCsv(searchText);
-      const keywords = parseCsv(keywordText);
-
       const payload = {
-        search_terms,
-        keywords,
+        search_terms: parseCsv(searchText),
+        keywords: parseCsv(keywordText),
         min_clicks: Number(minClicks),
         min_cost: Number(minCost),
         similarity_threshold: Number(similarity),
@@ -148,7 +178,8 @@ export default function AppPage() {
           .filter(Boolean),
       };
 
-      const r = await fetch(`${API_BASE}/run`, {
+      // IMPORTANT: use your Next.js proxy route (not the Render URL directly)
+      const r = await fetch("/api/audit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -183,9 +214,7 @@ export default function AppPage() {
       <header className="sticky top-0 z-40 border-b border-zinc-200 bg-zinc-50/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <LogoMark />
-          <div className="text-sm text-zinc-600">
-            API: <span className="font-medium text-zinc-900">{API_BASE}</span>
-          </div>
+          <div className="text-sm text-zinc-600">App</div>
         </div>
       </header>
 
@@ -298,6 +327,7 @@ export default function AppPage() {
                   Use AI decisions (recommended)
                 </label>
               </div>
+
               <label className="mt-3 block text-xs text-zinc-700">
                 Brand terms (comma separated)
                 <input
@@ -308,19 +338,17 @@ export default function AppPage() {
                 />
               </label>
 
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <label className="text-xs text-zinc-700">
-                  Batch size
-                  <input
-                    value={batchSize}
-                    onChange={(e) => setBatchSize(Number(e.target.value))}
-                    type="number"
-                    min="1"
-                    max="50"
-                    className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
-                  />
-                </label>
-              </div>
+              <label className="mt-3 block text-xs text-zinc-700">
+                Batch size
+                <input
+                  value={batchSize}
+                  onChange={(e) => setBatchSize(Number(e.target.value))}
+                  type="number"
+                  min="1"
+                  max="50"
+                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
+                />
+              </label>
             </div>
           </div>
 
@@ -347,21 +375,24 @@ export default function AppPage() {
           </div>
         </SectionCard>
 
-        <SectionCard title="Summary">
+        <SectionCard
+          title="Summary"
+          right={
+            results.length > 0 ? (
+              <button
+                onClick={() => downloadCsv("termtidy-negative-keywords.csv", exportRows)}
+                className="rounded-xl bg-zinc-900 px-4 py-2 text-sm font-semibold text-white hover:bg-zinc-800"
+              >
+                Export CSV (Google Ads)
+              </button>
+            ) : null
+          }
+        >
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Metric
-              label="Rows after filters"
-              value={String(stats.filtered_rows ?? 0)}
-            />
+            <Metric label="Rows after filters" value={String(stats.filtered_rows ?? 0)} />
             <Metric label="Candidates" value={String(stats.candidates ?? 0)} />
-            <Metric
-              label="Final negatives"
-              value={String(stats.negatives_after_brand ?? 0)}
-            />
-            <Metric
-              label="Estimated saving"
-              value={formatGBP(stats.saving_cost)}
-            />
+            <Metric label="Final negatives" value={String(stats.negatives_after_brand ?? 0)} />
+            <Metric label="Estimated saving" value={formatGBP(stats.saving_cost)} />
           </div>
 
           <div className="mt-3 text-xs text-zinc-600">
@@ -435,24 +466,16 @@ export default function AppPage() {
                 <tbody>
                   {results.map((r, i) => (
                     <tr key={i} className="border-b border-zinc-100">
-                      <td className="py-2 pr-4 font-medium">
-                        {r.suggested_negative ?? ""}
-                      </td>
+                      <td className="py-2 pr-4 font-medium">{r.suggested_negative ?? ""}</td>
                       <td className="py-2 pr-4">{r.search_term ?? ""}</td>
                       <td className="py-2 pr-4">{r.campaign ?? ""}</td>
                       <td className="py-2 pr-4">{r.ad_group ?? ""}</td>
-                      <td className="py-2 pr-4">
-                        {formatGBP(Number(r.cost || 0))}
-                      </td>
+                      <td className="py-2 pr-4">{formatGBP(Number(r.cost || 0))}</td>
                       <td className="py-2 pr-4">{r.clicks ?? ""}</td>
-                      <td className="py-2 pr-4">
-                        {Number(r.conversions || 0).toFixed(1)}
-                      </td>
+                      <td className="py-2 pr-4">{Number(r.conversions || 0).toFixed(1)}</td>
                       <td className="py-2 pr-4">{r.risk_score ?? ""}</td>
                       <td className="py-2 pr-4">{r.best_keyword ?? ""}</td>
-                      <td className="py-2 pr-4 text-zinc-600">
-                        {r.reason ?? ""}
-                      </td>
+                      <td className="py-2 pr-4 text-zinc-600">{r.reason ?? ""}</td>
                     </tr>
                   ))}
                 </tbody>
