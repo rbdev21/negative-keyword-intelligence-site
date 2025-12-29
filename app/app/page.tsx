@@ -58,22 +58,6 @@ function Metric({ label, value }: { label: string; value: string }) {
 }
 
 // ---------- helpers ----------
-function parseCsv(text: string): Record<string, any>[] {
-  // Simple CSV parser (no quoted commas). Good enough for MVP.
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  if (lines.length < 2) return [];
-  const headers = lines[0].split(",").map((h) => h.trim());
-
-  return lines.slice(1).map((line) => {
-    const cols = line.split(",");
-    const obj: Record<string, any> = {};
-    headers.forEach((h, i) => {
-      obj[h] = (cols[i] ?? "").trim();
-    });
-    return obj;
-  });
-}
-
 function formatGBP(n?: number) {
   const v = typeof n === "number" && Number.isFinite(n) ? n : 0;
   return `£${v.toFixed(2)}`;
@@ -93,7 +77,6 @@ function downloadCsv(filename: string, rows: Record<string, any>[]) {
   const headers = Object.keys(rows[0]);
   const escape = (v: any) => {
     const s = v == null ? "" : String(v);
-    // quote if contains comma, newline, or quote
     if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
     return s;
   };
@@ -130,60 +113,39 @@ export default function AppPage() {
   const [loading, setLoading] = useState(false);
   const [resp, setResp] = useState<ApiResponse | null>(null);
 
-  // NEW: campaign filter state
-  const [selectedCampaigns, setSelectedCampaigns] = useState<string[]>([]);
-
-  const results = resp?.results ?? [];
-  const stats = resp?.stats ?? {};
-
-  // Build dynamic campaign list from returned results
-  const campaignOptions = useMemo(() => {
+  // Dynamic campaign filter (based on results)
+  const campaigns = useMemo(() => {
     const set = new Set<string>();
-    for (const r of results) {
+    (resp?.results ?? []).forEach((r) => {
       const c = (r?.campaign ?? "").toString().trim();
       if (c) set.add(c);
-    }
+    });
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [results]);
+  }, [resp?.results]);
 
-  // If results change (new audit), keep selected campaigns only if they still exist.
-  // If nothing selected, treat as "All".
-  const normalizedSelectedCampaigns = useMemo(() => {
-    if (!selectedCampaigns.length) return [];
-    const valid = new Set(campaignOptions);
-    return selectedCampaigns.filter((c) => valid.has(c));
-  }, [selectedCampaigns, campaignOptions]);
+  const [campaignFilter, setCampaignFilter] = useState<string>("ALL");
 
-  // Filtered results based on selected campaigns
+  // Apply campaign filter
   const filteredResults = useMemo(() => {
-    const active = normalizedSelectedCampaigns;
-    if (!active.length) return results; // All campaigns
-    const allow = new Set(active);
-    return results.filter((r) => allow.has((r?.campaign ?? "").toString()));
-  }, [results, normalizedSelectedCampaigns]);
+    const rows = resp?.results ?? [];
+    if (!rows.length) return [];
+    if (campaignFilter === "ALL") return rows;
+    return rows.filter(
+      (r) => (r?.campaign ?? "").toString().trim() === campaignFilter
+    );
+  }, [resp?.results, campaignFilter]);
 
-  // Top 5 based on filtered results
+  const results = filteredResults;
+  const stats = resp?.stats ?? {};
+
   const top5 = useMemo(() => {
-    const rows = [...filteredResults];
+    const rows = [...results];
     rows.sort((a, b) => Number(b.cost || 0) - Number(a.cost || 0));
     return rows.slice(0, 5);
-  }, [filteredResults]);
-
-  // Optional: recompute saving based on filtered results for UI (not changing API stats)
-  const filteredSaving = useMemo(() => {
-    let sum = 0;
-    for (const r of filteredResults) sum += Number(r.cost || 0);
-    return sum;
-  }, [filteredResults]);
-
-  async function readFileAsText(file: File): Promise<string> {
-    return await file.text();
-  }
+  }, [results]);
 
   async function runAudit() {
     setResp(null);
-    // Reset campaign selection on new run so user starts in "All"
-    setSelectedCampaigns([]);
 
     if (!searchFile || !keywordsFile) {
       setResp({
@@ -197,36 +159,33 @@ export default function AppPage() {
     setLoading(true);
 
     try {
-      const [searchText, keywordText] = await Promise.all([
-        readFileAsText(searchFile),
-        readFileAsText(keywordsFile),
-      ]);
+      // ✅ Send form-data with CSV files (server parses)
+      const form = new FormData();
+      form.append("search_terms_file", searchFile);
+      form.append("keywords_file", keywordsFile);
 
-      const search_terms = parseCsv(searchText);
-      const keywords = parseCsv(keywordText);
-
-      const payload = {
-        search_terms,
-        keywords,
-        min_clicks: Number(minClicks),
-        min_cost: Number(minCost),
-        similarity_threshold: Number(similarity),
-        use_llm: Boolean(useLLM),
-        batch_size: Number(batchSize),
-        currency: "GBP",
-        brand_terms: brandTerms
+      // config overrides (as simple fields)
+      form.append("min_clicks", String(minClicks));
+      form.append("min_cost", String(minCost));
+      form.append("similarity_threshold", String(similarity));
+      form.append("use_llm", String(useLLM));
+      form.append("batch_size", String(batchSize));
+      form.append("currency", "GBP");
+      form.append(
+        "brand_terms",
+        brandTerms
           .split(",")
           .map((t) => t.trim())
-          .filter(Boolean),
-      };
+          .filter(Boolean)
+          .join(",")
+      );
 
-      // ✅ Call Next.js proxy route (same-origin)
       const r = await fetch("/api/run", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: form,
       });
 
+      // handle JSON + non-JSON responses
       let data: any = null;
       const text = await r.text();
       try {
@@ -245,6 +204,8 @@ export default function AppPage() {
         });
       } else {
         setResp(data as ApiResponse);
+        // reset campaign filter to ALL after each run (optional)
+        setCampaignFilter("ALL");
       }
     } catch (e: any) {
       setResp({
@@ -257,15 +218,13 @@ export default function AppPage() {
     }
   }
 
-  const hasResults = filteredResults.length > 0;
-
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
       <header className="sticky top-0 z-40 border-b border-zinc-200 bg-zinc-50/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <LogoMark />
           <div className="text-sm text-zinc-600">
-            Using proxy routes:{" "}
+            Using proxy route:{" "}
             <span className="font-medium text-zinc-900">/api/run</span>
           </div>
         </div>
@@ -380,7 +339,6 @@ export default function AppPage() {
                   Use AI decisions (recommended)
                 </label>
               </div>
-
               <label className="mt-3 block text-xs text-zinc-700">
                 Brand terms (comma separated)
                 <input
@@ -407,86 +365,6 @@ export default function AppPage() {
             </div>
           </div>
 
-          {/* NEW: campaign filter (only shows after results exist) */}
-          {campaignOptions.length > 0 ? (
-            <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <div className="text-sm font-semibold text-zinc-900">
-                    Filter by campaign
-                  </div>
-                  <p className="mt-1 text-xs text-zinc-600">
-                    Showing{" "}
-                    <span className="font-medium text-zinc-900">
-                      {filteredResults.length}
-                    </span>{" "}
-                    results{" "}
-                    {normalizedSelectedCampaigns.length
-                      ? "for selected campaigns."
-                      : "across all campaigns."}
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCampaigns([])}
-                    className={[
-                      "rounded-xl px-3 py-2 text-sm font-semibold transition",
-                      normalizedSelectedCampaigns.length === 0
-                        ? "bg-zinc-900 text-white"
-                        : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50",
-                    ].join(" ")}
-                  >
-                    All campaigns
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCampaigns(campaignOptions)}
-                    className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
-                  >
-                    Select all
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCampaigns([])}
-                    className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
-                  >
-                    Clear
-                  </button>
-                </div>
-              </div>
-
-              <div className="mt-4">
-                <label className="text-xs font-medium text-zinc-700">
-                  Campaigns (multi-select)
-                </label>
-                <select
-                  multiple
-                  value={normalizedSelectedCampaigns.length ? normalizedSelectedCampaigns : []}
-                  onChange={(e) => {
-                    const selected = Array.from(e.target.selectedOptions).map(
-                      (o) => o.value
-                    );
-                    setSelectedCampaigns(selected);
-                  }}
-                  className="mt-2 h-44 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm"
-                >
-                  {campaignOptions.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-                <p className="mt-2 text-xs text-zinc-500">
-                  Tip: Hold <span className="font-medium">Cmd</span> (Mac) to select multiple.
-                </p>
-              </div>
-            </div>
-          ) : null}
-
           <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
               <button
@@ -504,12 +382,12 @@ export default function AppPage() {
 
               <button
                 onClick={() =>
-                  downloadCsv("termtidy_negative_keywords.csv", filteredResults)
+                  downloadCsv("termtidy_negative_keywords.csv", results)
                 }
-                disabled={loading || filteredResults.length === 0}
+                disabled={loading || results.length === 0}
                 className={[
                   "inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold transition",
-                  loading || filteredResults.length === 0
+                  loading || results.length === 0
                     ? "border border-zinc-200 bg-white text-zinc-400"
                     : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50",
                 ].join(" ")}
@@ -541,15 +419,15 @@ export default function AppPage() {
               value={String(stats.negatives_after_brand ?? 0)}
             />
             <Metric
-              label="Estimated saving (filtered)"
-              value={formatGBP(filteredSaving)}
+              label="Estimated saving"
+              value={formatGBP(stats.saving_cost)}
             />
           </div>
 
           <div className="mt-3 text-xs text-zinc-600">
-            Annualised saving estimate (filtered):{" "}
+            Annualised saving estimate:{" "}
             <span className="font-medium text-zinc-900">
-              {formatGBP(filteredSaving * 12)}
+              {formatGBP(stats.saving_cost_annual)}
             </span>
             {stats.protected_brand_rows ? (
               <>
@@ -563,8 +441,46 @@ export default function AppPage() {
           </div>
         </SectionCard>
 
+        {results.length > 0 ? (
+          <SectionCard title="Filter results">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+              <label className="text-sm text-zinc-700">
+                Campaign
+                <select
+                  value={campaignFilter}
+                  onChange={(e) => setCampaignFilter(e.target.value)}
+                  className="mt-1 block w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
+                >
+                  <option value="ALL">All campaigns</option>
+                  {campaigns.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="text-sm text-zinc-600">
+                Showing{" "}
+                <span className="font-semibold text-zinc-900">
+                  {results.length}
+                </span>{" "}
+                rows
+                {campaignFilter !== "ALL" ? (
+                  <>
+                    {" "}
+                    in{" "}
+                    <span className="font-semibold text-zinc-900">
+                      {campaignFilter}
+                    </span>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          </SectionCard>
+        ) : null}
+
         <SectionCard title="Top 5 most expensive wasted queries">
-          {!hasResults ? (
+          {top5.length === 0 ? (
             <p className="text-sm text-zinc-600">No results yet.</p>
           ) : (
             <div className="overflow-x-auto">
@@ -597,7 +513,7 @@ export default function AppPage() {
         </SectionCard>
 
         <SectionCard title="Negative keyword suggestions">
-          {!hasResults ? (
+          {results.length === 0 ? (
             <p className="text-sm text-zinc-600">No results yet.</p>
           ) : (
             <div className="overflow-x-auto">
@@ -617,7 +533,7 @@ export default function AppPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredResults.map((r, i) => (
+                  {results.map((r, i) => (
                     <tr key={i} className="border-b border-zinc-100">
                       <td className="py-2 pr-4 font-medium">
                         {r.suggested_negative ?? ""}
