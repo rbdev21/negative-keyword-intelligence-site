@@ -130,14 +130,51 @@ export default function AppPage() {
   const [loading, setLoading] = useState(false);
   const [resp, setResp] = useState<ApiResponse | null>(null);
 
+  // NEW: campaign filter state
+  const [selectedCampaigns, setSelectedCampaigns] = useState<string[]>([]);
+
   const results = resp?.results ?? [];
   const stats = resp?.stats ?? {};
 
+  // Build dynamic campaign list from returned results
+  const campaignOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of results) {
+      const c = (r?.campaign ?? "").toString().trim();
+      if (c) set.add(c);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [results]);
+
+  // If results change (new audit), keep selected campaigns only if they still exist.
+  // If nothing selected, treat as "All".
+  const normalizedSelectedCampaigns = useMemo(() => {
+    if (!selectedCampaigns.length) return [];
+    const valid = new Set(campaignOptions);
+    return selectedCampaigns.filter((c) => valid.has(c));
+  }, [selectedCampaigns, campaignOptions]);
+
+  // Filtered results based on selected campaigns
+  const filteredResults = useMemo(() => {
+    const active = normalizedSelectedCampaigns;
+    if (!active.length) return results; // All campaigns
+    const allow = new Set(active);
+    return results.filter((r) => allow.has((r?.campaign ?? "").toString()));
+  }, [results, normalizedSelectedCampaigns]);
+
+  // Top 5 based on filtered results
   const top5 = useMemo(() => {
-    const rows = [...results];
+    const rows = [...filteredResults];
     rows.sort((a, b) => Number(b.cost || 0) - Number(a.cost || 0));
     return rows.slice(0, 5);
-  }, [results]);
+  }, [filteredResults]);
+
+  // Optional: recompute saving based on filtered results for UI (not changing API stats)
+  const filteredSaving = useMemo(() => {
+    let sum = 0;
+    for (const r of filteredResults) sum += Number(r.cost || 0);
+    return sum;
+  }, [filteredResults]);
 
   async function readFileAsText(file: File): Promise<string> {
     return await file.text();
@@ -145,6 +182,8 @@ export default function AppPage() {
 
   async function runAudit() {
     setResp(null);
+    // Reset campaign selection on new run so user starts in "All"
+    setSelectedCampaigns([]);
 
     if (!searchFile || !keywordsFile) {
       setResp({
@@ -181,14 +220,13 @@ export default function AppPage() {
           .filter(Boolean),
       };
 
-      // ✅ IMPORTANT: call our Next.js proxy route (same-origin)
+      // ✅ Call Next.js proxy route (same-origin)
       const r = await fetch("/api/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
-      // Some failures return non-JSON; handle both
       let data: any = null;
       const text = await r.text();
       try {
@@ -218,6 +256,8 @@ export default function AppPage() {
       setLoading(false);
     }
   }
+
+  const hasResults = filteredResults.length > 0;
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
@@ -340,6 +380,7 @@ export default function AppPage() {
                   Use AI decisions (recommended)
                 </label>
               </div>
+
               <label className="mt-3 block text-xs text-zinc-700">
                 Brand terms (comma separated)
                 <input
@@ -366,6 +407,86 @@ export default function AppPage() {
             </div>
           </div>
 
+          {/* NEW: campaign filter (only shows after results exist) */}
+          {campaignOptions.length > 0 ? (
+            <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-zinc-900">
+                    Filter by campaign
+                  </div>
+                  <p className="mt-1 text-xs text-zinc-600">
+                    Showing{" "}
+                    <span className="font-medium text-zinc-900">
+                      {filteredResults.length}
+                    </span>{" "}
+                    results{" "}
+                    {normalizedSelectedCampaigns.length
+                      ? "for selected campaigns."
+                      : "across all campaigns."}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCampaigns([])}
+                    className={[
+                      "rounded-xl px-3 py-2 text-sm font-semibold transition",
+                      normalizedSelectedCampaigns.length === 0
+                        ? "bg-zinc-900 text-white"
+                        : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50",
+                    ].join(" ")}
+                  >
+                    All campaigns
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCampaigns(campaignOptions)}
+                    className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
+                  >
+                    Select all
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCampaigns([])}
+                    className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-4">
+                <label className="text-xs font-medium text-zinc-700">
+                  Campaigns (multi-select)
+                </label>
+                <select
+                  multiple
+                  value={normalizedSelectedCampaigns.length ? normalizedSelectedCampaigns : []}
+                  onChange={(e) => {
+                    const selected = Array.from(e.target.selectedOptions).map(
+                      (o) => o.value
+                    );
+                    setSelectedCampaigns(selected);
+                  }}
+                  className="mt-2 h-44 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm"
+                >
+                  {campaignOptions.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-2 text-xs text-zinc-500">
+                  Tip: Hold <span className="font-medium">Cmd</span> (Mac) to select multiple.
+                </p>
+              </div>
+            </div>
+          ) : null}
+
           <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
               <button
@@ -383,12 +504,12 @@ export default function AppPage() {
 
               <button
                 onClick={() =>
-                  downloadCsv("termtidy_negative_keywords.csv", results)
+                  downloadCsv("termtidy_negative_keywords.csv", filteredResults)
                 }
-                disabled={loading || results.length === 0}
+                disabled={loading || filteredResults.length === 0}
                 className={[
                   "inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold transition",
-                  loading || results.length === 0
+                  loading || filteredResults.length === 0
                     ? "border border-zinc-200 bg-white text-zinc-400"
                     : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50",
                 ].join(" ")}
@@ -419,13 +540,16 @@ export default function AppPage() {
               label="Final negatives"
               value={String(stats.negatives_after_brand ?? 0)}
             />
-            <Metric label="Estimated saving" value={formatGBP(stats.saving_cost)} />
+            <Metric
+              label="Estimated saving (filtered)"
+              value={formatGBP(filteredSaving)}
+            />
           </div>
 
           <div className="mt-3 text-xs text-zinc-600">
-            Annualised saving estimate:{" "}
+            Annualised saving estimate (filtered):{" "}
             <span className="font-medium text-zinc-900">
-              {formatGBP(stats.saving_cost_annual)}
+              {formatGBP(filteredSaving * 12)}
             </span>
             {stats.protected_brand_rows ? (
               <>
@@ -440,7 +564,7 @@ export default function AppPage() {
         </SectionCard>
 
         <SectionCard title="Top 5 most expensive wasted queries">
-          {top5.length === 0 ? (
+          {!hasResults ? (
             <p className="text-sm text-zinc-600">No results yet.</p>
           ) : (
             <div className="overflow-x-auto">
@@ -460,7 +584,9 @@ export default function AppPage() {
                       <td className="py-2 pr-4">{r.search_term ?? ""}</td>
                       <td className="py-2 pr-4">{r.campaign ?? ""}</td>
                       <td className="py-2 pr-4">{r.ad_group ?? ""}</td>
-                      <td className="py-2 pr-4">{formatGBP(Number(r.cost || 0))}</td>
+                      <td className="py-2 pr-4">
+                        {formatGBP(Number(r.cost || 0))}
+                      </td>
                       <td className="py-2 pr-4">{r.clicks ?? ""}</td>
                     </tr>
                   ))}
@@ -471,7 +597,7 @@ export default function AppPage() {
         </SectionCard>
 
         <SectionCard title="Negative keyword suggestions">
-          {results.length === 0 ? (
+          {!hasResults ? (
             <p className="text-sm text-zinc-600">No results yet.</p>
           ) : (
             <div className="overflow-x-auto">
@@ -491,7 +617,7 @@ export default function AppPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {results.map((r, i) => (
+                  {filteredResults.map((r, i) => (
                     <tr key={i} className="border-b border-zinc-100">
                       <td className="py-2 pr-4 font-medium">
                         {r.suggested_negative ?? ""}
