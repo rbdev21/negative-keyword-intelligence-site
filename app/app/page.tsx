@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Stats = {
   initial_rows?: number;
@@ -15,26 +15,19 @@ type Stats = {
 
 type ApiResponse = {
   ok: boolean;
-  error?: any;
+  error?: string;
   detail?: any;
   stats?: Stats;
   results?: Record<string, any>[];
 };
 
-type JobStatus =
-  | "idle"
-  | "queued"
-  | "running"
-  | "done"
-  | "error"
-  | "canceled";
+type JobStatus = "idle" | "queued" | "running" | "done" | "error" | "canceled";
 
 type JobPollResponse = {
   ok?: boolean;
   job_id?: string;
-  jobId?: string;
   status?: "queued" | "running" | "done" | "error" | "canceled";
-  progress?: number; // 0..1 optional
+  progress?: number; // 0..100 (or 0..1 from some systems)
   stats?: Stats;
   results?: Record<string, any>[];
   error?: any;
@@ -91,23 +84,20 @@ function safeStringify(obj: any) {
   }
 }
 
-// This prevents "Objects are not valid as a React child"
-function asDisplayText(v: any): string {
-  if (v == null) return "";
-  if (typeof v === "string") return v;
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
-  if (v instanceof Error) return v.message;
-  // If API returns { message: "..." }
-  if (typeof v === "object" && typeof v.message === "string") return v.message;
-  return safeStringify(v);
+function errorToText(x: any) {
+  if (x == null) return "";
+  if (typeof x === "string") return x;
+  if (typeof x === "number" || typeof x === "boolean") return String(x);
+  if (x?.message && typeof x.message === "string") return x.message;
+  return safeStringify(x);
 }
 
 function downloadCsv(filename: string, rows: Record<string, any>[]) {
   if (!rows || rows.length === 0) return;
 
   const headers = Object.keys(rows[0]);
-  const escape = (val: any) => {
-    const s = val == null ? "" : String(val);
+  const escape = (v: any) => {
+    const s = v == null ? "" : String(v);
     if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
     return s;
   };
@@ -129,6 +119,52 @@ function downloadCsv(filename: string, rows: Record<string, any>[]) {
   URL.revokeObjectURL(url);
 }
 
+function clampProgress(p: any): number | null {
+  if (typeof p !== "number" || !Number.isFinite(p)) return null;
+  // Some systems return 0..1. Your FastAPI returns 0..100.
+  if (p >= 0 && p <= 1) return Math.round(p * 100);
+  if (p >= 0 && p <= 100) return Math.round(p);
+  return null;
+}
+
+function StatusPill({ status }: { status: JobStatus }) {
+  const base =
+    "inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold border";
+  const styles: Record<JobStatus, string> = {
+    idle: "border-zinc-200 bg-white text-zinc-700",
+    queued: "border-amber-200 bg-amber-50 text-amber-800",
+    running: "border-blue-200 bg-blue-50 text-blue-800",
+    done: "border-emerald-200 bg-emerald-50 text-emerald-800",
+    error: "border-red-200 bg-red-50 text-red-800",
+    canceled: "border-zinc-200 bg-zinc-50 text-zinc-700",
+  };
+
+  const label: Record<JobStatus, string> = {
+    idle: "Idle",
+    queued: "Queued",
+    running: "Running",
+    done: "Done",
+    error: "Error",
+    canceled: "Canceled",
+  };
+
+  return <span className={`${base} ${styles[status]}`}>{label[status]}</span>;
+}
+
+function ProgressBar({ value }: { value: number }) {
+  return (
+    <div className="w-full">
+      <div className="h-2 w-full rounded-full bg-zinc-200 overflow-hidden">
+        <div
+          className="h-2 rounded-full bg-zinc-900 transition-all"
+          style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
+        />
+      </div>
+      <div className="mt-1 text-xs text-zinc-600">{value}%</div>
+    </div>
+  );
+}
+
 export default function AppPage() {
   const [searchFile, setSearchFile] = useState<File | null>(null);
   const [keywordsFile, setKeywordsFile] = useState<File | null>(null);
@@ -143,39 +179,37 @@ export default function AppPage() {
   // Job mode state
   const [jobStatus, setJobStatus] = useState<JobStatus>("idle");
   const [jobId, setJobId] = useState<string | null>(null);
-  const [jobProgress, setJobProgress] = useState<number | null>(null);
+  const [jobProgress, setJobProgress] = useState<number>(0);
 
   const [loading, setLoading] = useState(false);
   const [resp, setResp] = useState<ApiResponse | null>(null);
 
-  // Prevent multiple poll loops
   const pollTimerRef = useRef<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-
-  // Results + stats from response
-  const rawResults = resp?.results ?? [];
-  const stats = resp?.stats ?? {};
 
   // Dynamic campaign filter (based on results)
   const campaigns = useMemo(() => {
     const set = new Set<string>();
-    rawResults.forEach((r) => {
+    (resp?.results ?? []).forEach((r) => {
       const c = (r?.campaign ?? "").toString().trim();
       if (c) set.add(c);
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [rawResults]);
+  }, [resp?.results]);
 
   const [campaignFilter, setCampaignFilter] = useState<string>("ALL");
 
-  // Apply campaign filter
-  const results = useMemo(() => {
-    if (!rawResults.length) return [];
-    if (campaignFilter === "ALL") return rawResults;
-    return rawResults.filter(
+  const filteredResults = useMemo(() => {
+    const rows = resp?.results ?? [];
+    if (!rows.length) return [];
+    if (campaignFilter === "ALL") return rows;
+    return rows.filter(
       (r) => (r?.campaign ?? "").toString().trim() === campaignFilter
     );
-  }, [rawResults, campaignFilter]);
+  }, [resp?.results, campaignFilter]);
+
+  const results = filteredResults;
+  const stats = resp?.stats ?? {};
 
   const top5 = useMemo(() => {
     const rows = [...results];
@@ -192,7 +226,6 @@ export default function AppPage() {
 
   async function pollJob(id: string) {
     clearPoll();
-    setJobId(id);
 
     const poll = async () => {
       try {
@@ -209,99 +242,73 @@ export default function AppPage() {
         try {
           data = JSON.parse(text);
         } catch {
-          data = { status: "error", error: "Non-JSON response", detail: text };
+          data = { status: "error", error: { message: "Non-JSON response" }, detail: text };
         }
 
-        if (!r.ok) {
-          setJobStatus("error");
-          setLoading(false);
-          setResp({
-            ok: false,
-            error: data?.error || "Job poll failed",
-            detail: data?.detail ?? data,
-          });
-          return;
-        }
-
-        const status = data.status ?? "running";
+        const status = (data.status ?? (r.ok ? "running" : "error")) as JobPollResponse["status"];
+        const progress = clampProgress(data.progress);
+        if (progress != null) setJobProgress(progress);
 
         if (status === "queued" || status === "running") {
           setJobStatus(status);
-          setJobProgress(
-            typeof data.progress === "number" ? data.progress : null
-          );
-          pollTimerRef.current = window.setTimeout(poll, 1500);
+          pollTimerRef.current = window.setTimeout(poll, 1200);
           return;
         }
 
         if (status === "done") {
           setJobStatus("done");
-          setJobProgress(1);
+          setJobProgress(100);
+          setLoading(false);
+
           setResp({
             ok: true,
             stats: data.stats ?? {},
             results: data.results ?? [],
           });
-          setLoading(false);
           return;
         }
 
         if (status === "canceled") {
           setJobStatus("canceled");
           setLoading(false);
-          setResp({
-            ok: false,
-            error: "Canceled",
-            detail: "Job was canceled.",
-          });
+          setResp({ ok: false, error: "Canceled", detail: "Job was canceled." });
           return;
         }
 
+        // error
         setJobStatus("error");
         setLoading(false);
         setResp({
           ok: false,
-          error: data.error || "Job failed",
-          detail: data.detail ?? data,
+          error: "Job failed",
+          detail: data.error ?? data.detail ?? data,
         });
       } catch (e: any) {
         if (e?.name === "AbortError") return;
         setJobStatus("error");
         setLoading(false);
-        setResp({
-          ok: false,
-          error: "Failed to fetch",
-          detail: e?.message ?? String(e),
-        });
+        setResp({ ok: false, error: "Failed to fetch", detail: e?.message ?? String(e) });
       }
     };
 
-    poll();
+    await poll();
   }
 
   async function cancelJob() {
-    if (!jobId) return;
     clearPoll();
     abortRef.current?.abort();
     abortRef.current = null;
-
-    try {
-      await fetch(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, {
-        method: "POST",
-      });
-    } catch {
-      // ignore
-    }
-
     setJobStatus("canceled");
     setLoading(false);
   }
 
   async function runAudit() {
     setResp(null);
-    setJobProgress(null);
+    setCampaignFilter("ALL");
+
     setJobStatus("idle");
     setJobId(null);
+    setJobProgress(0);
     clearPoll();
 
     if (!searchFile || !keywordsFile) {
@@ -350,64 +357,36 @@ export default function AppPage() {
         data = { ok: false, error: "Non-JSON response", detail: text };
       }
 
-      if (!r.ok) {
+      if (!r.ok || data?.ok !== true) {
         setLoading(false);
         setJobStatus("error");
-        setResp({
-          ok: false,
-          error: data?.error || "Request failed",
-          detail: data?.detail ?? data,
-        });
+        setResp({ ok: false, error: data?.error || "Request failed", detail: data?.detail ?? data });
         return;
       }
 
-      // Your /api/jobs returns { ok: true, jobId: "..." } (or job_id)
-      const newJobId = data?.jobId || data?.job_id || data?.id;
+      // Accept job_id OR jobId from backend/proxy
+      const newJobId: string | undefined = data?.job_id || data?.jobId || data?.id;
       if (!newJobId) {
         setLoading(false);
         setJobStatus("error");
-        setResp({
-          ok: false,
-          error: "Job start failed",
-          detail: data,
-        });
+        setResp({ ok: false, error: "Job start failed", detail: data });
         return;
       }
 
-      setJobStatus("queued");
       setJobId(newJobId);
+      setJobStatus("queued");
+      setJobProgress(0);
 
-      // Reset filter after each new run
-      setCampaignFilter("ALL");
-
-      // Start polling
       await pollJob(newJobId);
     } catch (e: any) {
       if (e?.name === "AbortError") return;
       setLoading(false);
       setJobStatus("error");
-      setResp({
-        ok: false,
-        error: "Failed to fetch",
-        detail: e?.message ?? String(e),
-      });
+      setResp({ ok: false, error: "Failed to fetch", detail: e?.message ?? String(e) });
     }
   }
 
-  const statusLabel = useMemo(() => {
-    if (!loading && jobStatus === "idle") return null;
-    if (jobStatus === "queued") return "Queued…";
-    if (jobStatus === "running") return "Running audit…";
-    if (jobStatus === "done") return "Done";
-    if (jobStatus === "canceled") return "Canceled";
-    if (jobStatus === "error") return "Error";
-    return loading ? "Working…" : null;
-  }, [jobStatus, loading]);
-
-  const errorTitle =
-    resp?.ok === false ? asDisplayText(resp.error) || "Error" : "";
-  const errorBody =
-    resp?.ok === false ? asDisplayText(resp.detail ?? resp) : "";
+  const showProgress = loading && (jobStatus === "queued" || jobStatus === "running");
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
@@ -425,9 +404,7 @@ export default function AppPage() {
         <SectionCard title="Upload exports (temporary — until Google Ads integration)">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="rounded-xl border border-zinc-200 bg-white p-4">
-              <div className="text-sm font-semibold text-zinc-900">
-                Search Terms CSV
-              </div>
+              <div className="text-sm font-semibold text-zinc-900">Search Terms CSV</div>
               <p className="mt-1 text-xs text-zinc-600">
                 Export from Google Ads Search Terms report.
               </p>
@@ -440,17 +417,13 @@ export default function AppPage() {
               {searchFile ? (
                 <p className="mt-2 text-xs text-zinc-600">
                   Selected:{" "}
-                  <span className="font-medium text-zinc-900">
-                    {searchFile.name}
-                  </span>
+                  <span className="font-medium text-zinc-900">{searchFile.name}</span>
                 </p>
               ) : null}
             </div>
 
             <div className="rounded-xl border border-zinc-200 bg-white p-4">
-              <div className="text-sm font-semibold text-zinc-900">
-                Keywords CSV
-              </div>
+              <div className="text-sm font-semibold text-zinc-900">Keywords CSV</div>
               <p className="mt-1 text-xs text-zinc-600">
                 Export from Google Ads Keywords view.
               </p>
@@ -463,9 +436,7 @@ export default function AppPage() {
               {keywordsFile ? (
                 <p className="mt-2 text-xs text-zinc-600">
                   Selected:{" "}
-                  <span className="font-medium text-zinc-900">
-                    {keywordsFile.name}
-                  </span>
+                  <span className="font-medium text-zinc-900">{keywordsFile.name}</span>
                 </p>
               ) : null}
             </div>
@@ -497,12 +468,8 @@ export default function AppPage() {
             </div>
 
             <div className="rounded-xl border border-zinc-200 bg-white p-4">
-              <div className="text-sm font-semibold text-zinc-900">
-                Similarity threshold
-              </div>
-              <p className="mt-1 text-xs text-zinc-600">
-                Higher = more aggressive.
-              </p>
+              <div className="text-sm font-semibold text-zinc-900">Similarity threshold</div>
+              <p className="mt-1 text-xs text-zinc-600">Higher = more aggressive.</p>
               <input
                 value={similarity}
                 onChange={(e) => setSimilarity(Number(e.target.value))}
@@ -515,9 +482,8 @@ export default function AppPage() {
             </div>
 
             <div className="rounded-xl border border-zinc-200 bg-white p-4">
-              <div className="text-sm font-semibold text-zinc-900">
-                AI + brand protection
-              </div>
+              <div className="text-sm font-semibold text-zinc-900">AI + brand protection</div>
+
               <div className="mt-3 flex items-center gap-3">
                 <input
                   id="use-llm"
@@ -557,25 +523,21 @@ export default function AppPage() {
             </div>
           </div>
 
-          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-3">
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex flex-wrap items-center gap-3">
               <button
                 onClick={runAudit}
                 disabled={loading}
                 className={[
                   "inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold transition",
-                  loading
-                    ? "bg-zinc-300 text-zinc-600"
-                    : "bg-zinc-900 text-white hover:bg-zinc-800",
+                  loading ? "bg-zinc-300 text-zinc-600" : "bg-zinc-900 text-white hover:bg-zinc-800",
                 ].join(" ")}
               >
-                {loading ? "Starting…" : "Run audit"}
+                {loading ? "Working…" : "Run audit"}
               </button>
 
               <button
-                onClick={() =>
-                  downloadCsv("termtidy_negative_keywords.csv", results)
-                }
+                onClick={() => downloadCsv("termtidy_negative_keywords.csv", results)}
                 disabled={loading || results.length === 0}
                 className={[
                   "inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold transition",
@@ -597,62 +559,71 @@ export default function AppPage() {
               ) : null}
             </div>
 
-            {statusLabel ? (
-              <div className="flex items-center gap-3 text-sm text-zinc-600">
-                <span className="font-medium text-zinc-900">{statusLabel}</span>
+            <div className="min-w-[280px] rounded-xl border border-zinc-200 bg-white p-4">
+              <div className="flex items-center justify-between gap-3">
+                <StatusPill status={jobStatus} />
                 {jobId ? (
                   <span className="text-xs text-zinc-500">
                     Job: <span className="font-mono">{jobId}</span>
                   </span>
-                ) : null}
-                {typeof jobProgress === "number" ? (
-                  <span className="text-xs text-zinc-500">
-                    {(jobProgress * 100).toFixed(0)}%
-                  </span>
-                ) : null}
+                ) : (
+                  <span className="text-xs text-zinc-500"> </span>
+                )}
               </div>
-            ) : null}
 
-            {resp?.ok === false ? (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 max-w-xl">
-                <div className="font-semibold">{errorTitle}</div>
-                <pre className="mt-2 whitespace-pre-wrap text-xs text-red-700">
-                  {errorBody}
-                </pre>
-              </div>
-            ) : null}
+              {showProgress ? (
+                <div className="mt-3">
+                  <ProgressBar value={jobProgress} />
+                  <div className="mt-2 text-xs text-zinc-600">
+                    {jobStatus === "queued"
+                      ? "Queued — preparing your audit…"
+                      : "Running — this can take a couple of minutes on large exports."}
+                  </div>
+                </div>
+              ) : jobStatus === "done" && resp?.ok ? (
+                <div className="mt-3 text-sm text-zinc-700">
+                  Completed. Found{" "}
+                  <span className="font-semibold text-zinc-900">{results.length}</span>{" "}
+                  suggested negatives.
+                </div>
+              ) : jobStatus === "error" && resp?.ok === false ? (
+                <div className="mt-3 text-sm text-red-700">
+                  {resp.error}
+                </div>
+              ) : (
+                <div className="mt-3 text-xs text-zinc-500">
+                  Upload CSVs and run an audit.
+                </div>
+              )}
+            </div>
           </div>
+
+          {resp?.ok === false ? (
+            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              <div className="font-semibold">{resp.error}</div>
+              <pre className="mt-2 whitespace-pre-wrap text-xs text-red-700">
+                {errorToText(resp.detail)}
+              </pre>
+            </div>
+          ) : null}
         </SectionCard>
 
         <SectionCard title="Summary">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Metric
-              label="Rows after filters"
-              value={String(stats.filtered_rows ?? 0)}
-            />
+            <Metric label="Rows after filters" value={String(stats.filtered_rows ?? 0)} />
             <Metric label="Candidates" value={String(stats.candidates ?? 0)} />
-            <Metric
-              label="Final negatives"
-              value={String(stats.negatives_after_brand ?? 0)}
-            />
-            <Metric
-              label="Estimated saving"
-              value={formatGBP(stats.saving_cost)}
-            />
+            <Metric label="Final negatives" value={String(stats.negatives_after_brand ?? 0)} />
+            <Metric label="Estimated saving" value={formatGBP(stats.saving_cost)} />
           </div>
 
           <div className="mt-3 text-xs text-zinc-600">
             Annualised saving estimate:{" "}
-            <span className="font-medium text-zinc-900">
-              {formatGBP(stats.saving_cost_annual)}
-            </span>
+            <span className="font-medium text-zinc-900">{formatGBP(stats.saving_cost_annual)}</span>
             {stats.protected_brand_rows ? (
               <>
                 {" "}
                 • Brand-protected rows:{" "}
-                <span className="font-medium text-zinc-900">
-                  {stats.protected_brand_rows}
-                </span>
+                <span className="font-medium text-zinc-900">{stats.protected_brand_rows}</span>
               </>
             ) : null}
           </div>
@@ -676,19 +647,16 @@ export default function AppPage() {
                   ))}
                 </select>
               </label>
+
               <div className="text-sm text-zinc-600">
                 Showing{" "}
-                <span className="font-semibold text-zinc-900">
-                  {results.length}
-                </span>{" "}
+                <span className="font-semibold text-zinc-900">{results.length}</span>{" "}
                 rows
                 {campaignFilter !== "ALL" ? (
                   <>
                     {" "}
                     in{" "}
-                    <span className="font-semibold text-zinc-900">
-                      {campaignFilter}
-                    </span>
+                    <span className="font-semibold text-zinc-900">{campaignFilter}</span>
                   </>
                 ) : null}
               </div>
@@ -717,9 +685,7 @@ export default function AppPage() {
                       <td className="py-2 pr-4">{r.search_term ?? ""}</td>
                       <td className="py-2 pr-4">{r.campaign ?? ""}</td>
                       <td className="py-2 pr-4">{r.ad_group ?? ""}</td>
-                      <td className="py-2 pr-4">
-                        {formatGBP(Number(r.cost || 0))}
-                      </td>
+                      <td className="py-2 pr-4">{formatGBP(Number(r.cost || 0))}</td>
                       <td className="py-2 pr-4">{r.clicks ?? ""}</td>
                     </tr>
                   ))}
@@ -752,19 +718,13 @@ export default function AppPage() {
                 <tbody>
                   {results.map((r, i) => (
                     <tr key={i} className="border-b border-zinc-100">
-                      <td className="py-2 pr-4 font-medium">
-                        {r.suggested_negative ?? ""}
-                      </td>
+                      <td className="py-2 pr-4 font-medium">{r.suggested_negative ?? ""}</td>
                       <td className="py-2 pr-4">{r.search_term ?? ""}</td>
                       <td className="py-2 pr-4">{r.campaign ?? ""}</td>
                       <td className="py-2 pr-4">{r.ad_group ?? ""}</td>
-                      <td className="py-2 pr-4">
-                        {formatGBP(Number(r.cost || 0))}
-                      </td>
+                      <td className="py-2 pr-4">{formatGBP(Number(r.cost || 0))}</td>
                       <td className="py-2 pr-4">{r.clicks ?? ""}</td>
-                      <td className="py-2 pr-4">
-                        {Number(r.conversions || 0).toFixed(1)}
-                      </td>
+                      <td className="py-2 pr-4">{Number(r.conversions || 0).toFixed(1)}</td>
                       <td className="py-2 pr-4">{r.risk_score ?? ""}</td>
                       <td className="py-2 pr-4">{r.best_keyword ?? ""}</td>
                       <td className="py-2 pr-4 text-zinc-600">{r.reason ?? ""}</td>

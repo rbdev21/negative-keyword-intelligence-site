@@ -1,26 +1,43 @@
 import { NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function getApiBase() {
-  const base =
-    process.env.TERMTIDY_API_URL || process.env.NEXT_PUBLIC_TERMTIDY_API_URL;
+const API_BASE = process.env.TERMTIDY_API_URL; // e.g. https://termtidy-api.onrender.com (NO trailing slash required)
+const JOBS_TABLE = process.env.TERMTIDY_JOBS_TABLE || "audit_jobs";
 
-  if (!base) {
-    throw new Error(
-      "Missing TERMTIDY_API_URL env var (server-side). Set TERMTIDY_API_URL in .env.local / Vercel."
-    );
+function admin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  if (!url || !serviceKey) {
+    throw new Error("Missing Supabase env vars (NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY).");
   }
-
-  // Strip trailing slash
-  return base.replace(/\/+$/, "");
+  return createSupabaseAdmin(url, serviceKey, { auth: { persistSession: false } });
 }
 
 export async function POST(req: Request) {
   try {
-    const apiBase = getApiBase();
+    if (!API_BASE) {
+      return NextResponse.json(
+        { ok: false, error: "Missing TERMTIDY_API_URL env var" },
+        { status: 500 }
+      );
+    }
 
+    // 1) Must be logged in (use cookie auth)
+    const supabase = await createClient();
+    const {
+      data: { user },
+      error: userErr,
+    } = await supabase.auth.getUser();
+
+    if (userErr || !user) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
+
+    // 2) Read incoming form-data (CSV files + config fields)
     const form = await req.formData();
 
     const searchFile = form.get("search_terms_file");
@@ -38,44 +55,86 @@ export async function POST(req: Request) {
       );
     }
 
-    // Forward as-is to FastAPI /jobs
-    const targetUrl = `${apiBase}/jobs`;
+    // 3) Forward to FastAPI /jobs (absolute URL)
+    const forward = new FormData();
+    forward.append("search_terms_file", searchFile);
+    forward.append("keywords_file", keywordsFile);
 
-    // Add a timeout so you never get “hung for 5 minutes” without a useful error
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 120_000); // 2 minutes
+    const passthroughKeys = [
+      "min_clicks",
+      "min_cost",
+      "similarity_threshold",
+      "use_llm",
+      "batch_size",
+      "currency",
+      "brand_terms",
+    ] as const;
 
-    let upstreamRes: Response;
-    try {
-      upstreamRes = await fetch(targetUrl, {
-        method: "POST",
-        body: form,
-        cache: "no-store",
-        signal: controller.signal,
-        // no headers needed; fetch will set multipart boundary automatically
-      });
-    } finally {
-      clearTimeout(timeout);
+    for (const k of passthroughKeys) {
+      const v = form.get(k);
+      if (typeof v === "string" && v.length > 0) forward.append(k, v);
     }
 
-    const text = await upstreamRes.text();
-    let data: any;
+    const startRes = await fetch(`${API_BASE.replace(/\/$/, "")}/jobs`, {
+      method: "POST",
+      body: forward,
+      cache: "no-store",
+    });
+
+    const startText = await startRes.text();
+    let startJson: any;
     try {
-      data = JSON.parse(text);
+      startJson = JSON.parse(startText);
     } catch {
-      data = { ok: false, error: "Non-JSON response from API", detail: text };
+      startJson = { ok: false, error: "Non-JSON response", detail: startText };
     }
 
-    return NextResponse.json(data, { status: upstreamRes.status });
-  } catch (e: any) {
-    const msg = e?.name === "AbortError" ? "Upstream timeout" : e?.message ?? String(e);
-    return NextResponse.json(
+    if (!startRes.ok || startJson?.ok !== true || !startJson?.job_id) {
+      return NextResponse.json(
+        { ok: false, error: "Job start failed", detail: startJson },
+        { status: 500 }
+      );
+    }
+
+    const jobId: string = startJson.job_id;
+
+    // 4) Persist job in Supabase (durable)
+    const supabaseAdmin = admin();
+    const nowIso = new Date().toISOString();
+
+    const { error: insertErr } = await supabaseAdmin.from(JOBS_TABLE).upsert(
       {
-        ok: false,
-        error: "Proxy error",
-        detail: msg,
+        id: jobId,
+        user_id: user.id,
+        status: "queued",
+        progress: 0,
+        stats: null,
+        results: null,
+        error: null,
+        created_at: nowIso,
+        updated_at: nowIso,
       },
-      { status: 502 }
+      { onConflict: "id" }
+    );
+
+    if (insertErr) {
+      return NextResponse.json(
+        { ok: false, error: "Failed to persist job", detail: insertErr.message },
+        { status: 500 }
+      );
+    }
+
+    // 5) Return to frontend
+    return NextResponse.json({
+      ok: true,
+      job_id: jobId,
+      status: "queued",
+      progress: 0,
+    });
+  } catch (e: any) {
+    return NextResponse.json(
+      { ok: false, error: "Internal Server Error", detail: e?.message ?? String(e) },
+      { status: 500 }
     );
   }
 }
