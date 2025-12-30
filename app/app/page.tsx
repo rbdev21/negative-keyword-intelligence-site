@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 type Stats = {
   initial_rows?: number;
@@ -15,10 +15,30 @@ type Stats = {
 
 type ApiResponse = {
   ok: boolean;
-  error?: string;
+  error?: any;
   detail?: any;
   stats?: Stats;
   results?: Record<string, any>[];
+};
+
+type JobStatus =
+  | "idle"
+  | "queued"
+  | "running"
+  | "done"
+  | "error"
+  | "canceled";
+
+type JobPollResponse = {
+  ok?: boolean;
+  job_id?: string;
+  jobId?: string;
+  status?: "queued" | "running" | "done" | "error" | "canceled";
+  progress?: number; // 0..1 optional
+  stats?: Stats;
+  results?: Record<string, any>[];
+  error?: any;
+  detail?: any;
 };
 
 function LogoMark() {
@@ -71,12 +91,23 @@ function safeStringify(obj: any) {
   }
 }
 
+// This prevents "Objects are not valid as a React child"
+function asDisplayText(v: any): string {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (v instanceof Error) return v.message;
+  // If API returns { message: "..." }
+  if (typeof v === "object" && typeof v.message === "string") return v.message;
+  return safeStringify(v);
+}
+
 function downloadCsv(filename: string, rows: Record<string, any>[]) {
   if (!rows || rows.length === 0) return;
 
   const headers = Object.keys(rows[0]);
-  const escape = (v: any) => {
-    const s = v == null ? "" : String(v);
+  const escape = (val: any) => {
+    const s = val == null ? "" : String(val);
     if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
     return s;
   };
@@ -107,36 +138,44 @@ export default function AppPage() {
   const [similarity, setSimilarity] = useState(0.75);
   const [useLLM, setUseLLM] = useState(true);
   const [batchSize, setBatchSize] = useState(5);
-
   const [brandTerms, setBrandTerms] = useState("");
+
+  // Job mode state
+  const [jobStatus, setJobStatus] = useState<JobStatus>("idle");
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [jobProgress, setJobProgress] = useState<number | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [resp, setResp] = useState<ApiResponse | null>(null);
 
+  // Prevent multiple poll loops
+  const pollTimerRef = useRef<number | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Results + stats from response
+  const rawResults = resp?.results ?? [];
+  const stats = resp?.stats ?? {};
+
   // Dynamic campaign filter (based on results)
   const campaigns = useMemo(() => {
     const set = new Set<string>();
-    (resp?.results ?? []).forEach((r) => {
+    rawResults.forEach((r) => {
       const c = (r?.campaign ?? "").toString().trim();
       if (c) set.add(c);
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [resp?.results]);
+  }, [rawResults]);
 
   const [campaignFilter, setCampaignFilter] = useState<string>("ALL");
 
   // Apply campaign filter
-  const filteredResults = useMemo(() => {
-    const rows = resp?.results ?? [];
-    if (!rows.length) return [];
-    if (campaignFilter === "ALL") return rows;
-    return rows.filter(
+  const results = useMemo(() => {
+    if (!rawResults.length) return [];
+    if (campaignFilter === "ALL") return rawResults;
+    return rawResults.filter(
       (r) => (r?.campaign ?? "").toString().trim() === campaignFilter
     );
-  }, [resp?.results, campaignFilter]);
-
-  const results = filteredResults;
-  const stats = resp?.stats ?? {};
+  }, [rawResults, campaignFilter]);
 
   const top5 = useMemo(() => {
     const rows = [...results];
@@ -144,8 +183,126 @@ export default function AppPage() {
     return rows.slice(0, 5);
   }, [results]);
 
+  function clearPoll() {
+    if (pollTimerRef.current) {
+      window.clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  }
+
+  async function pollJob(id: string) {
+    clearPoll();
+    setJobId(id);
+
+    const poll = async () => {
+      try {
+        if (abortRef.current?.signal.aborted) return;
+
+        const r = await fetch(`/api/jobs/${encodeURIComponent(id)}`, {
+          method: "GET",
+          cache: "no-store",
+          signal: abortRef.current?.signal,
+        });
+
+        const text = await r.text();
+        let data: JobPollResponse;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = { status: "error", error: "Non-JSON response", detail: text };
+        }
+
+        if (!r.ok) {
+          setJobStatus("error");
+          setLoading(false);
+          setResp({
+            ok: false,
+            error: data?.error || "Job poll failed",
+            detail: data?.detail ?? data,
+          });
+          return;
+        }
+
+        const status = data.status ?? "running";
+
+        if (status === "queued" || status === "running") {
+          setJobStatus(status);
+          setJobProgress(
+            typeof data.progress === "number" ? data.progress : null
+          );
+          pollTimerRef.current = window.setTimeout(poll, 1500);
+          return;
+        }
+
+        if (status === "done") {
+          setJobStatus("done");
+          setJobProgress(1);
+          setResp({
+            ok: true,
+            stats: data.stats ?? {},
+            results: data.results ?? [],
+          });
+          setLoading(false);
+          return;
+        }
+
+        if (status === "canceled") {
+          setJobStatus("canceled");
+          setLoading(false);
+          setResp({
+            ok: false,
+            error: "Canceled",
+            detail: "Job was canceled.",
+          });
+          return;
+        }
+
+        setJobStatus("error");
+        setLoading(false);
+        setResp({
+          ok: false,
+          error: data.error || "Job failed",
+          detail: data.detail ?? data,
+        });
+      } catch (e: any) {
+        if (e?.name === "AbortError") return;
+        setJobStatus("error");
+        setLoading(false);
+        setResp({
+          ok: false,
+          error: "Failed to fetch",
+          detail: e?.message ?? String(e),
+        });
+      }
+    };
+
+    poll();
+  }
+
+  async function cancelJob() {
+    if (!jobId) return;
+    clearPoll();
+    abortRef.current?.abort();
+    abortRef.current = null;
+
+    try {
+      await fetch(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, {
+        method: "POST",
+      });
+    } catch {
+      // ignore
+    }
+
+    setJobStatus("canceled");
+    setLoading(false);
+  }
+
   async function runAudit() {
     setResp(null);
+    setJobProgress(null);
+    setJobStatus("idle");
+    setJobId(null);
+    clearPoll();
 
     if (!searchFile || !keywordsFile) {
       setResp({
@@ -157,14 +314,13 @@ export default function AppPage() {
     }
 
     setLoading(true);
+    abortRef.current = new AbortController();
 
     try {
-      // ✅ Send form-data with CSV files (server parses)
       const form = new FormData();
       form.append("search_terms_file", searchFile);
       form.append("keywords_file", keywordsFile);
 
-      // config overrides (as simple fields)
       form.append("min_clicks", String(minClicks));
       form.append("min_cost", String(minCost));
       form.append("similarity_threshold", String(similarity));
@@ -180,14 +336,14 @@ export default function AppPage() {
           .join(",")
       );
 
-      const r = await fetch("/api/run", {
+      const r = await fetch("/api/jobs", {
         method: "POST",
         body: form,
+        signal: abortRef.current.signal,
       });
 
-      // handle JSON + non-JSON responses
-      let data: any = null;
       const text = await r.text();
+      let data: any;
       try {
         data = JSON.parse(text);
       } catch {
@@ -195,28 +351,63 @@ export default function AppPage() {
       }
 
       if (!r.ok) {
+        setLoading(false);
+        setJobStatus("error");
         setResp({
           ok: false,
           error: data?.error || "Request failed",
           detail: data?.detail ?? data,
-          stats: data?.stats,
-          results: data?.results,
         });
-      } else {
-        setResp(data as ApiResponse);
-        // reset campaign filter to ALL after each run (optional)
-        setCampaignFilter("ALL");
+        return;
       }
+
+      // Your /api/jobs returns { ok: true, jobId: "..." } (or job_id)
+      const newJobId = data?.jobId || data?.job_id || data?.id;
+      if (!newJobId) {
+        setLoading(false);
+        setJobStatus("error");
+        setResp({
+          ok: false,
+          error: "Job start failed",
+          detail: data,
+        });
+        return;
+      }
+
+      setJobStatus("queued");
+      setJobId(newJobId);
+
+      // Reset filter after each new run
+      setCampaignFilter("ALL");
+
+      // Start polling
+      await pollJob(newJobId);
     } catch (e: any) {
+      if (e?.name === "AbortError") return;
+      setLoading(false);
+      setJobStatus("error");
       setResp({
         ok: false,
         error: "Failed to fetch",
         detail: e?.message ?? String(e),
       });
-    } finally {
-      setLoading(false);
     }
   }
+
+  const statusLabel = useMemo(() => {
+    if (!loading && jobStatus === "idle") return null;
+    if (jobStatus === "queued") return "Queued…";
+    if (jobStatus === "running") return "Running audit…";
+    if (jobStatus === "done") return "Done";
+    if (jobStatus === "canceled") return "Canceled";
+    if (jobStatus === "error") return "Error";
+    return loading ? "Working…" : null;
+  }, [jobStatus, loading]);
+
+  const errorTitle =
+    resp?.ok === false ? asDisplayText(resp.error) || "Error" : "";
+  const errorBody =
+    resp?.ok === false ? asDisplayText(resp.detail ?? resp) : "";
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
@@ -224,8 +415,8 @@ export default function AppPage() {
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <LogoMark />
           <div className="text-sm text-zinc-600">
-            Using proxy route:{" "}
-            <span className="font-medium text-zinc-900">/api/run</span>
+            Using proxy routes:{" "}
+            <span className="font-medium text-zinc-900">/api/jobs</span>
           </div>
         </div>
       </header>
@@ -339,6 +530,7 @@ export default function AppPage() {
                   Use AI decisions (recommended)
                 </label>
               </div>
+
               <label className="mt-3 block text-xs text-zinc-700">
                 Brand terms (comma separated)
                 <input
@@ -377,7 +569,7 @@ export default function AppPage() {
                     : "bg-zinc-900 text-white hover:bg-zinc-800",
                 ].join(" ")}
               >
-                {loading ? "Running audit…" : "Run audit"}
+                {loading ? "Starting…" : "Run audit"}
               </button>
 
               <button
@@ -394,13 +586,38 @@ export default function AppPage() {
               >
                 Download CSV
               </button>
+
+              {loading ? (
+                <button
+                  onClick={cancelJob}
+                  className="inline-flex items-center justify-center rounded-xl border border-zinc-200 bg-white px-5 py-3 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
+                >
+                  Cancel
+                </button>
+              ) : null}
             </div>
 
+            {statusLabel ? (
+              <div className="flex items-center gap-3 text-sm text-zinc-600">
+                <span className="font-medium text-zinc-900">{statusLabel}</span>
+                {jobId ? (
+                  <span className="text-xs text-zinc-500">
+                    Job: <span className="font-mono">{jobId}</span>
+                  </span>
+                ) : null}
+                {typeof jobProgress === "number" ? (
+                  <span className="text-xs text-zinc-500">
+                    {(jobProgress * 100).toFixed(0)}%
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+
             {resp?.ok === false ? (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                <div className="font-semibold">{resp.error}</div>
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 max-w-xl">
+                <div className="font-semibold">{errorTitle}</div>
                 <pre className="mt-2 whitespace-pre-wrap text-xs text-red-700">
-                  {safeStringify(resp.detail)}
+                  {errorBody}
                 </pre>
               </div>
             ) : null}
@@ -550,9 +767,7 @@ export default function AppPage() {
                       </td>
                       <td className="py-2 pr-4">{r.risk_score ?? ""}</td>
                       <td className="py-2 pr-4">{r.best_keyword ?? ""}</td>
-                      <td className="py-2 pr-4 text-zinc-600">
-                        {r.reason ?? ""}
-                      </td>
+                      <td className="py-2 pr-4 text-zinc-600">{r.reason ?? ""}</td>
                     </tr>
                   ))}
                 </tbody>

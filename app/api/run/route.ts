@@ -1,150 +1,121 @@
 import { NextResponse } from "next/server";
 
-// IMPORTANT:
-// This route should stay LIGHT.
-// It should validate + parse CSV quickly + forward to the Python API.
-// The Python API is where the heavy work happens.
-
-export const runtime = "nodejs"; // ensure Node runtime (needed for Buffer, etc.)
-
 const API_BASE = process.env.TERMTIDY_API_URL || process.env.NEXT_PUBLIC_TERMTIDY_API_URL;
 
-function badRequest(message: string, extra?: any) {
-  return NextResponse.json({ ok: false, error: "Bad Request", detail: { message, extra } }, { status: 400 });
+type JobStatus = "queued" | "running" | "done" | "error";
+
+type Job = {
+  id: string;
+  status: JobStatus;
+  createdAt: number;
+  startedAt?: number;
+  finishedAt?: number;
+  message?: string;
+  result?: any;
+};
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __TERMTIDY_JOBS__: Map<string, Job> | undefined;
 }
 
-function serverError(message: string, extra?: any) {
-  return NextResponse.json({ ok: false, error: "Server Error", detail: { message, extra } }, { status: 500 });
+function jobsStore(): Map<string, Job> {
+  if (!global.__TERMTIDY_JOBS__) global.__TERMTIDY_JOBS__ = new Map();
+  return global.__TERMTIDY_JOBS__;
 }
 
-function parseCsvBasic(text: string): Record<string, any>[] {
-  // Basic CSV parser (handles quoted values minimally).
-  // Good enough for Google Ads exports.
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  if (lines.length < 2) return [];
-
-  const parseLine = (line: string) => {
-    const out: string[] = [];
-    let cur = "";
-    let inQuotes = false;
-
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-
-      if (ch === '"') {
-        // escaped quote
-        if (inQuotes && line[i + 1] === '"') {
-          cur += '"';
-          i++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (ch === "," && !inQuotes) {
-        out.push(cur);
-        cur = "";
-      } else {
-        cur += ch;
-      }
-    }
-    out.push(cur);
-    return out.map((s) => s.trim());
-  };
-
-  const headers = parseLine(lines[0]).map((h) => h.trim());
-  const rows: Record<string, any>[] = [];
-
-  for (const line of lines.slice(1)) {
-    const cols = parseLine(line);
-    const obj: Record<string, any> = {};
-    headers.forEach((h, idx) => {
-      obj[h] = (cols[idx] ?? "").trim();
-    });
-    rows.push(obj);
-  }
-
-  return rows;
+function uid() {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
 export async function POST(req: Request) {
-  try {
-    if (!API_BASE) {
-      return serverError("Missing TERMTIDY_API_URL env var", {
-        hint: "Set TERMTIDY_API_URL in Vercel and in local .env.local (no quotes). Example: https://termtidy-api.onrender.com",
-      });
-    }
-
-    // Expect multipart/form-data with:
-    // - search_terms_file (csv)
-    // - keywords_file (csv)
-    // plus optional fields: min_clicks, min_cost, similarity_threshold, use_llm, batch_size, brand_terms (comma string)
-    const form = await req.formData();
-
-    const searchFile = form.get("search_terms_file");
-    const keywordsFile = form.get("keywords_file");
-
-    if (!(searchFile instanceof File) || !(keywordsFile instanceof File)) {
-      return badRequest("Missing CSV files. Expect form-data keys: search_terms_file, keywords_file");
-    }
-
-    // Read CSVs (quickly)
-    const [searchText, keywordText] = await Promise.all([searchFile.text(), keywordsFile.text()]);
-    const search_terms = parseCsvBasic(searchText);
-    const keywords = parseCsvBasic(keywordText);
-
-    // Read config fields from form
-    const min_clicks = Number(form.get("min_clicks") ?? 3);
-    const min_cost = Number(form.get("min_cost") ?? 0);
-    const similarity_threshold = Number(form.get("similarity_threshold") ?? 0.75);
-    const use_llm = String(form.get("use_llm") ?? "true") === "true";
-    const batch_size = Number(form.get("batch_size") ?? 5);
-    const currency = String(form.get("currency") ?? "GBP");
-
-    const brand_terms_raw = String(form.get("brand_terms") ?? "");
-    const brand_terms = brand_terms_raw
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
-
-    const payload = {
-      search_terms,
-      keywords,
-      min_clicks,
-      min_cost,
-      similarity_threshold,
-      use_llm,
-      batch_size,
-      currency,
-      brand_terms,
-    };
-
-    // Avoid hanging forever
-    const controller = new AbortController();
-    const timeoutMs = 240_000; // 4 minutes (local dev). On Vercel you may still hit platform limits if too slow.
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-    let upstreamResp: Response;
-    try {
-      upstreamResp = await fetch(`${API_BASE}/run`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    const text = await upstreamResp.text();
-    let data: any;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = { ok: false, error: "Non-JSON response from API", detail: text };
-    }
-
-    return NextResponse.json(data, { status: upstreamResp.ok ? 200 : upstreamResp.status });
-  } catch (e: any) {
-    const msg = e?.name === "AbortError" ? "Request timed out while calling the audit API" : (e?.message ?? String(e));
-    return serverError(msg);
+  if (!API_BASE) {
+    return NextResponse.json(
+      { ok: false, error: "Missing TERMTIDY_API_URL env var" },
+      { status: 500 }
+    );
   }
+
+  const formData = await req.formData();
+  const searchTermsFile = formData.get("search_terms_file") as File | null;
+  const keywordsFile = formData.get("keywords_file") as File | null;
+
+  if (!searchTermsFile || !keywordsFile) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Bad Request",
+        message:
+          "Missing CSV files. Expect form-data keys: search_terms_file, keywords_file",
+      },
+      { status: 400 }
+    );
+  }
+
+  const configRaw = formData.get("config") as string | null;
+  const config = configRaw ? JSON.parse(configRaw) : {};
+
+  const jobId = uid();
+  const store = jobsStore();
+
+  store.set(jobId, {
+    id: jobId,
+    status: "queued",
+    createdAt: Date.now(),
+    message: "Queued…",
+  });
+
+  // Fire-and-forget background task (in-memory)
+  (async () => {
+    const job = store.get(jobId);
+    if (!job) return;
+
+    job.status = "running";
+    job.startedAt = Date.now();
+    job.message = "Running audit…";
+    store.set(jobId, job);
+
+    try {
+      const upstreamForm = new FormData();
+      upstreamForm.append("search_terms_file", searchTermsFile, searchTermsFile.name);
+      upstreamForm.append("keywords_file", keywordsFile, keywordsFile.name);
+      upstreamForm.append("config", JSON.stringify(config));
+
+      const r = await fetch(`${API_BASE}/run_csv`, {
+        method: "POST",
+        body: upstreamForm,
+      });
+
+      const text = await r.text();
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { ok: false, error: "Non-JSON response", detail: text };
+      }
+
+      if (!r.ok) {
+        job.status = "error";
+        job.finishedAt = Date.now();
+        job.message = data?.error || "Audit failed";
+        job.result = data;
+        store.set(jobId, job);
+        return;
+      }
+
+      job.status = "done";
+      job.finishedAt = Date.now();
+      job.message = "Complete";
+      job.result = data;
+      store.set(jobId, job);
+    } catch (e: any) {
+      job.status = "error";
+      job.finishedAt = Date.now();
+      job.message = "Audit failed";
+      job.result = { ok: false, error: "Failed to fetch", detail: e?.message ?? String(e) };
+      store.set(jobId, job);
+    }
+  })();
+
+  return NextResponse.json({ ok: true, job_id: jobId });
 }
