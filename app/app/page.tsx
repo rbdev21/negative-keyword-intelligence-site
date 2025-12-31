@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 type Stats = {
   initial_rows?: number;
@@ -27,7 +27,8 @@ type JobPollResponse = {
   ok?: boolean;
   job_id?: string;
   status?: "queued" | "running" | "done" | "error" | "canceled";
-  progress?: number; // 0..100 (or 0..1 from some systems)
+  progress?: number; // 0..100
+  message?: any;
   stats?: Stats;
   results?: Record<string, any>[];
   error?: any;
@@ -119,12 +120,12 @@ function downloadCsv(filename: string, rows: Record<string, any>[]) {
   URL.revokeObjectURL(url);
 }
 
-function clampProgress(p: any): number | null {
-  if (typeof p !== "number" || !Number.isFinite(p)) return null;
+function clampProgress(p: any): number {
+  if (typeof p !== "number" || !Number.isFinite(p)) return 0;
   // Some systems return 0..1. Your FastAPI returns 0..100.
   if (p >= 0 && p <= 1) return Math.round(p * 100);
   if (p >= 0 && p <= 100) return Math.round(p);
-  return null;
+  return 0;
 }
 
 function StatusPill({ status }: { status: JobStatus }) {
@@ -180,12 +181,14 @@ export default function AppPage() {
   const [jobStatus, setJobStatus] = useState<JobStatus>("idle");
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobProgress, setJobProgress] = useState<number>(0);
+  const [jobMessage, setJobMessage] = useState<string>("");
 
   const [loading, setLoading] = useState(false);
   const [resp, setResp] = useState<ApiResponse | null>(null);
 
   const pollTimerRef = useRef<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const pollAttemptsRef = useRef<number>(0);
 
   // Dynamic campaign filter (based on results)
   const campaigns = useMemo(() => {
@@ -224,8 +227,14 @@ export default function AppPage() {
     }
   }
 
+  function setMessageFromAny(x: any) {
+    const t = errorToText(x);
+    if (t) setJobMessage(t);
+  }
+
   async function pollJob(id: string) {
     clearPoll();
+    pollAttemptsRef.current = 0;
 
     const poll = async () => {
       try {
@@ -242,16 +251,36 @@ export default function AppPage() {
         try {
           data = JSON.parse(text);
         } catch {
-          data = { status: "error", error: { message: "Non-JSON response" }, detail: text };
+          data = {
+            status: "error",
+            error: { message: "Non-JSON response" },
+            detail: text,
+          };
         }
 
-        const status = (data.status ?? (r.ok ? "running" : "error")) as JobPollResponse["status"];
+        // Helpful debug hook
+        (window as any).__lastJobPoll = data;
+
+        const status = (data.status ??
+          (r.ok ? "running" : "error")) as JobPollResponse["status"];
+
         const progress = clampProgress(data.progress);
-        if (progress != null) setJobProgress(progress);
+        setJobProgress(progress);
+
+        if (data.message != null) setMessageFromAny(data.message);
 
         if (status === "queued" || status === "running") {
           setJobStatus(status);
-          pollTimerRef.current = window.setTimeout(poll, 1200);
+
+          pollAttemptsRef.current += 1;
+          const interval =
+            pollAttemptsRef.current < 25
+              ? 1200
+              : pollAttemptsRef.current < 60
+              ? 1800
+              : 2500;
+
+          pollTimerRef.current = window.setTimeout(poll, interval);
           return;
         }
 
@@ -265,13 +294,21 @@ export default function AppPage() {
             stats: data.stats ?? {},
             results: data.results ?? [],
           });
+
+          if (!jobMessage) {
+            setJobMessage(
+              `Complete. Found ${(data.results ?? []).length} suggested negatives.`
+            );
+          }
           return;
         }
 
         if (status === "canceled") {
           setJobStatus("canceled");
+          setJobProgress(100);
           setLoading(false);
           setResp({ ok: false, error: "Canceled", detail: "Job was canceled." });
+          if (!jobMessage) setJobMessage("Canceled.");
           return;
         }
 
@@ -283,11 +320,21 @@ export default function AppPage() {
           error: "Job failed",
           detail: data.error ?? data.detail ?? data,
         });
+
+        if (!jobMessage) {
+          const msg = errorToText((data.error ?? data.detail) ?? data);
+          if (msg) setJobMessage(msg);
+        }
       } catch (e: any) {
         if (e?.name === "AbortError") return;
         setJobStatus("error");
         setLoading(false);
-        setResp({ ok: false, error: "Failed to fetch", detail: e?.message ?? String(e) });
+        setResp({
+          ok: false,
+          error: "Failed to fetch",
+          detail: e?.message ?? String(e),
+        });
+        setJobMessage(e?.message ?? "Failed to fetch");
       }
     };
 
@@ -295,10 +342,23 @@ export default function AppPage() {
   }
 
   async function cancelJob() {
+    if (!jobId) return;
+
     clearPoll();
     abortRef.current?.abort();
     abortRef.current = null;
+
+    try {
+      await fetch(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, {
+        method: "POST",
+      });
+    } catch {
+      // ignore
+    }
+
     setJobStatus("canceled");
+    setJobProgress(100);
+    setJobMessage("Cancel requested.");
     setLoading(false);
   }
 
@@ -309,6 +369,7 @@ export default function AppPage() {
     setJobStatus("idle");
     setJobId(null);
     setJobProgress(0);
+    setJobMessage("");
     clearPoll();
 
     if (!searchFile || !keywordsFile) {
@@ -360,33 +421,48 @@ export default function AppPage() {
       if (!r.ok || data?.ok !== true) {
         setLoading(false);
         setJobStatus("error");
-        setResp({ ok: false, error: data?.error || "Request failed", detail: data?.detail ?? data });
+        setResp({
+          ok: false,
+          error: data?.error || "Request failed",
+          detail: data?.detail ?? data,
+        });
+
+        // FIXED: no mixing || with ??
+        const msg = errorToText((data?.error ?? data?.detail) ?? data);
+        if (msg) setJobMessage(msg);
         return;
       }
 
-      // Accept job_id OR jobId from backend/proxy
       const newJobId: string | undefined = data?.job_id || data?.jobId || data?.id;
       if (!newJobId) {
         setLoading(false);
         setJobStatus("error");
         setResp({ ok: false, error: "Job start failed", detail: data });
+        setJobMessage("Job start failed.");
         return;
       }
 
       setJobId(newJobId);
       setJobStatus("queued");
       setJobProgress(0);
+      setJobMessage("Queued…");
 
       await pollJob(newJobId);
     } catch (e: any) {
       if (e?.name === "AbortError") return;
       setLoading(false);
       setJobStatus("error");
-      setResp({ ok: false, error: "Failed to fetch", detail: e?.message ?? String(e) });
+      setResp({
+        ok: false,
+        error: "Failed to fetch",
+        detail: e?.message ?? String(e),
+      });
+      setJobMessage(e?.message ?? "Failed to fetch");
     }
   }
 
-  const showProgress = loading && (jobStatus === "queued" || jobStatus === "running");
+  const showProgress =
+    loading && (jobStatus === "queued" || jobStatus === "running");
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
@@ -404,7 +480,9 @@ export default function AppPage() {
         <SectionCard title="Upload exports (temporary — until Google Ads integration)">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="rounded-xl border border-zinc-200 bg-white p-4">
-              <div className="text-sm font-semibold text-zinc-900">Search Terms CSV</div>
+              <div className="text-sm font-semibold text-zinc-900">
+                Search Terms CSV
+              </div>
               <p className="mt-1 text-xs text-zinc-600">
                 Export from Google Ads Search Terms report.
               </p>
@@ -417,13 +495,17 @@ export default function AppPage() {
               {searchFile ? (
                 <p className="mt-2 text-xs text-zinc-600">
                   Selected:{" "}
-                  <span className="font-medium text-zinc-900">{searchFile.name}</span>
+                  <span className="font-medium text-zinc-900">
+                    {searchFile.name}
+                  </span>
                 </p>
               ) : null}
             </div>
 
             <div className="rounded-xl border border-zinc-200 bg-white p-4">
-              <div className="text-sm font-semibold text-zinc-900">Keywords CSV</div>
+              <div className="text-sm font-semibold text-zinc-900">
+                Keywords CSV
+              </div>
               <p className="mt-1 text-xs text-zinc-600">
                 Export from Google Ads Keywords view.
               </p>
@@ -436,7 +518,9 @@ export default function AppPage() {
               {keywordsFile ? (
                 <p className="mt-2 text-xs text-zinc-600">
                   Selected:{" "}
-                  <span className="font-medium text-zinc-900">{keywordsFile.name}</span>
+                  <span className="font-medium text-zinc-900">
+                    {keywordsFile.name}
+                  </span>
                 </p>
               ) : null}
             </div>
@@ -468,8 +552,12 @@ export default function AppPage() {
             </div>
 
             <div className="rounded-xl border border-zinc-200 bg-white p-4">
-              <div className="text-sm font-semibold text-zinc-900">Similarity threshold</div>
-              <p className="mt-1 text-xs text-zinc-600">Higher = more aggressive.</p>
+              <div className="text-sm font-semibold text-zinc-900">
+                Similarity threshold
+              </div>
+              <p className="mt-1 text-xs text-zinc-600">
+                Higher = more aggressive.
+              </p>
               <input
                 value={similarity}
                 onChange={(e) => setSimilarity(Number(e.target.value))}
@@ -482,7 +570,9 @@ export default function AppPage() {
             </div>
 
             <div className="rounded-xl border border-zinc-200 bg-white p-4">
-              <div className="text-sm font-semibold text-zinc-900">AI + brand protection</div>
+              <div className="text-sm font-semibold text-zinc-900">
+                AI + brand protection
+              </div>
 
               <div className="mt-3 flex items-center gap-3">
                 <input
@@ -530,14 +620,18 @@ export default function AppPage() {
                 disabled={loading}
                 className={[
                   "inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold transition",
-                  loading ? "bg-zinc-300 text-zinc-600" : "bg-zinc-900 text-white hover:bg-zinc-800",
+                  loading
+                    ? "bg-zinc-300 text-zinc-600"
+                    : "bg-zinc-900 text-white hover:bg-zinc-800",
                 ].join(" ")}
               >
                 {loading ? "Working…" : "Run audit"}
               </button>
 
               <button
-                onClick={() => downloadCsv("termtidy_negative_keywords.csv", results)}
+                onClick={() =>
+                  downloadCsv("termtidy_negative_keywords.csv", results)
+                }
                 disabled={loading || results.length === 0}
                 className={[
                   "inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold transition",
@@ -549,7 +643,7 @@ export default function AppPage() {
                 Download CSV
               </button>
 
-              {loading ? (
+              {loading && jobId ? (
                 <button
                   onClick={cancelJob}
                   className="inline-flex items-center justify-center rounded-xl border border-zinc-200 bg-white px-5 py-3 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
@@ -559,7 +653,7 @@ export default function AppPage() {
               ) : null}
             </div>
 
-            <div className="min-w-[280px] rounded-xl border border-zinc-200 bg-white p-4">
+            <div className="min-w-[320px] rounded-xl border border-zinc-200 bg-white p-4">
               <div className="flex items-center justify-between gap-3">
                 <StatusPill status={jobStatus} />
                 {jobId ? (
@@ -572,23 +666,39 @@ export default function AppPage() {
               </div>
 
               {showProgress ? (
-                <div className="mt-3">
+                <div className="mt-3 space-y-2">
                   <ProgressBar value={jobProgress} />
-                  <div className="mt-2 text-xs text-zinc-600">
-                    {jobStatus === "queued"
-                      ? "Queued — preparing your audit…"
-                      : "Running — this can take a couple of minutes on large exports."}
+                  <div className="text-xs text-zinc-600">
+                    {jobMessage ||
+                      (jobStatus === "queued"
+                        ? "Queued — preparing your audit…"
+                        : "Running — this can take a couple of minutes on large exports.")}
                   </div>
                 </div>
               ) : jobStatus === "done" && resp?.ok ? (
                 <div className="mt-3 text-sm text-zinc-700">
-                  Completed. Found{" "}
-                  <span className="font-semibold text-zinc-900">{results.length}</span>{" "}
-                  suggested negatives.
+                  {jobMessage ? (
+                    <span>{jobMessage}</span>
+                  ) : (
+                    <>
+                      Completed. Found{" "}
+                      <span className="font-semibold text-zinc-900">
+                        {results.length}
+                      </span>{" "}
+                      suggested negatives.
+                    </>
+                  )}
                 </div>
               ) : jobStatus === "error" && resp?.ok === false ? (
                 <div className="mt-3 text-sm text-red-700">
-                  {resp.error}
+                  {resp.error || "Error"}
+                  <div className="mt-1 text-xs text-red-700">
+                    {jobMessage || errorToText(resp.detail)}
+                  </div>
+                </div>
+              ) : jobStatus === "canceled" ? (
+                <div className="mt-3 text-sm text-zinc-700">
+                  {jobMessage || "Canceled."}
                 </div>
               ) : (
                 <div className="mt-3 text-xs text-zinc-500">
@@ -610,20 +720,33 @@ export default function AppPage() {
 
         <SectionCard title="Summary">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Metric label="Rows after filters" value={String(stats.filtered_rows ?? 0)} />
+            <Metric
+              label="Rows after filters"
+              value={String(stats.filtered_rows ?? 0)}
+            />
             <Metric label="Candidates" value={String(stats.candidates ?? 0)} />
-            <Metric label="Final negatives" value={String(stats.negatives_after_brand ?? 0)} />
-            <Metric label="Estimated saving" value={formatGBP(stats.saving_cost)} />
+            <Metric
+              label="Final negatives"
+              value={String(stats.negatives_after_brand ?? 0)}
+            />
+            <Metric
+              label="Estimated saving"
+              value={formatGBP(stats.saving_cost)}
+            />
           </div>
 
           <div className="mt-3 text-xs text-zinc-600">
             Annualised saving estimate:{" "}
-            <span className="font-medium text-zinc-900">{formatGBP(stats.saving_cost_annual)}</span>
+            <span className="font-medium text-zinc-900">
+              {formatGBP(stats.saving_cost_annual)}
+            </span>
             {stats.protected_brand_rows ? (
               <>
                 {" "}
                 • Brand-protected rows:{" "}
-                <span className="font-medium text-zinc-900">{stats.protected_brand_rows}</span>
+                <span className="font-medium text-zinc-900">
+                  {stats.protected_brand_rows}
+                </span>
               </>
             ) : null}
           </div>
@@ -650,13 +773,17 @@ export default function AppPage() {
 
               <div className="text-sm text-zinc-600">
                 Showing{" "}
-                <span className="font-semibold text-zinc-900">{results.length}</span>{" "}
+                <span className="font-semibold text-zinc-900">
+                  {results.length}
+                </span>{" "}
                 rows
                 {campaignFilter !== "ALL" ? (
                   <>
                     {" "}
                     in{" "}
-                    <span className="font-semibold text-zinc-900">{campaignFilter}</span>
+                    <span className="font-semibold text-zinc-900">
+                      {campaignFilter}
+                    </span>
                   </>
                 ) : null}
               </div>
@@ -685,7 +812,9 @@ export default function AppPage() {
                       <td className="py-2 pr-4">{r.search_term ?? ""}</td>
                       <td className="py-2 pr-4">{r.campaign ?? ""}</td>
                       <td className="py-2 pr-4">{r.ad_group ?? ""}</td>
-                      <td className="py-2 pr-4">{formatGBP(Number(r.cost || 0))}</td>
+                      <td className="py-2 pr-4">
+                        {formatGBP(Number(r.cost || 0))}
+                      </td>
                       <td className="py-2 pr-4">{r.clicks ?? ""}</td>
                     </tr>
                   ))}
@@ -718,16 +847,24 @@ export default function AppPage() {
                 <tbody>
                   {results.map((r, i) => (
                     <tr key={i} className="border-b border-zinc-100">
-                      <td className="py-2 pr-4 font-medium">{r.suggested_negative ?? ""}</td>
+                      <td className="py-2 pr-4 font-medium">
+                        {r.suggested_negative ?? ""}
+                      </td>
                       <td className="py-2 pr-4">{r.search_term ?? ""}</td>
                       <td className="py-2 pr-4">{r.campaign ?? ""}</td>
                       <td className="py-2 pr-4">{r.ad_group ?? ""}</td>
-                      <td className="py-2 pr-4">{formatGBP(Number(r.cost || 0))}</td>
+                      <td className="py-2 pr-4">
+                        {formatGBP(Number(r.cost || 0))}
+                      </td>
                       <td className="py-2 pr-4">{r.clicks ?? ""}</td>
-                      <td className="py-2 pr-4">{Number(r.conversions || 0).toFixed(1)}</td>
+                      <td className="py-2 pr-4">
+                        {Number(r.conversions || 0).toFixed(1)}
+                      </td>
                       <td className="py-2 pr-4">{r.risk_score ?? ""}</td>
                       <td className="py-2 pr-4">{r.best_keyword ?? ""}</td>
-                      <td className="py-2 pr-4 text-zinc-600">{r.reason ?? ""}</td>
+                      <td className="py-2 pr-4 text-zinc-600">
+                        {r.reason ?? ""}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
