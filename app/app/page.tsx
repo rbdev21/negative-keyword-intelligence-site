@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Stats = {
   initial_rows?: number;
@@ -33,6 +33,30 @@ type JobPollResponse = {
   results?: Record<string, any>[];
   error?: any;
   detail?: any;
+};
+
+type UsageResponse = {
+  ok: boolean;
+  error?: string;
+  detail?: any;
+  period?: {
+    start: string | null;
+    end: string | null;
+    updated_at?: string | null;
+  };
+  usage?: {
+    used_terms: number;
+  };
+  quota?: {
+    base: number;
+    topup: number;
+    total: number;
+    remaining_quota: number;
+  };
+  credits?: {
+    balance: number;
+  };
+  remaining_total?: number;
 };
 
 function LogoMark() {
@@ -93,6 +117,12 @@ function errorToText(x: any) {
   return safeStringify(x);
 }
 
+function numberFmt(n: any) {
+  const v = typeof n === "number" && Number.isFinite(n) ? n : Number(n || 0);
+  if (!Number.isFinite(v)) return "0";
+  return v.toLocaleString();
+}
+
 function downloadCsv(filename: string, rows: Record<string, any>[]) {
   if (!rows || rows.length === 0) return;
 
@@ -122,7 +152,6 @@ function downloadCsv(filename: string, rows: Record<string, any>[]) {
 
 function clampProgress(p: any): number {
   if (typeof p !== "number" || !Number.isFinite(p)) return 0;
-  // Some systems return 0..1. Your FastAPI returns 0..100.
   if (p >= 0 && p <= 1) return Math.round(p * 100);
   if (p >= 0 && p <= 100) return Math.round(p);
   return 0;
@@ -177,6 +206,10 @@ export default function AppPage() {
   const [batchSize, setBatchSize] = useState(5);
   const [brandTerms, setBrandTerms] = useState("");
 
+  // Usage widget state
+  const [usage, setUsage] = useState<UsageResponse | null>(null);
+  const [usageLoading, setUsageLoading] = useState(false);
+
   // Job mode state
   const [jobStatus, setJobStatus] = useState<JobStatus>("idle");
   const [jobId, setJobId] = useState<string | null>(null);
@@ -219,6 +252,30 @@ export default function AppPage() {
     rows.sort((a, b) => Number(b.cost || 0) - Number(a.cost || 0));
     return rows.slice(0, 5);
   }, [results]);
+
+  async function refreshUsage() {
+    setUsageLoading(true);
+    try {
+      const r = await fetch("/api/usage", { method: "GET", cache: "no-store" });
+      const t = await r.text();
+      let j: any;
+      try {
+        j = JSON.parse(t);
+      } catch {
+        j = { ok: false, error: "Non-JSON response", detail: t };
+      }
+      setUsage(j);
+    } catch (e: any) {
+      setUsage({ ok: false, error: "Failed to fetch usage", detail: e?.message ?? String(e) });
+    } finally {
+      setUsageLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    refreshUsage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function clearPoll() {
     if (pollTimerRef.current) {
@@ -300,6 +357,9 @@ export default function AppPage() {
               `Complete. Found ${(data.results ?? []).length} suggested negatives.`
             );
           }
+
+          // Refresh usage once the run completes (quota/credits have been consumed)
+          refreshUsage();
           return;
         }
 
@@ -427,7 +487,20 @@ export default function AppPage() {
           detail: data?.detail ?? data,
         });
 
-        // FIXED: no mixing || with ??
+        // If quota exceeded, show a clearer message and refresh usage
+        if (r.status === 402 && data?.error === "Quota exceeded") {
+          const d = data?.detail ?? {};
+          const requested = Number(d?.requested ?? 0);
+          const remaining = Number(d?.remaining ?? 0);
+          const deficit = Math.max(0, requested - remaining);
+
+          setJobMessage(
+            `Quota exceeded. You need ${numberFmt(deficit)} more search terms to run this audit.`
+          );
+          refreshUsage();
+          return;
+        }
+
         const msg = errorToText((data?.error ?? data?.detail) ?? data);
         if (msg) setJobMessage(msg);
         return;
@@ -464,6 +537,14 @@ export default function AppPage() {
   const showProgress =
     loading && (jobStatus === "queued" || jobStatus === "running");
 
+  // Usage display helpers
+  const usedTerms = Number(usage?.usage?.used_terms ?? 0);
+  const quotaBase = Number(usage?.quota?.base ?? 0);
+  const quotaTopup = Number(usage?.quota?.topup ?? 0);
+  const quotaTotal = Number(usage?.quota?.total ?? (quotaBase + quotaTopup));
+  const creditsBal = Number(usage?.credits?.balance ?? 0);
+  const remainingTotal = Number(usage?.remaining_total ?? 0);
+
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
       <header className="sticky top-0 z-40 border-b border-zinc-200 bg-zinc-50/80 backdrop-blur">
@@ -477,6 +558,52 @@ export default function AppPage() {
       </header>
 
       <main className="mx-auto max-w-6xl px-6 py-10 space-y-6">
+        {/* Usage widget */}
+        <SectionCard title="Usage this period">
+          {usageLoading ? (
+            <p className="text-sm text-zinc-600">Loading usage…</p>
+          ) : usage?.ok === false ? (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              <div className="font-semibold">{usage.error || "Failed to load usage"}</div>
+              <pre className="mt-2 whitespace-pre-wrap text-xs text-red-700">
+                {errorToText(usage.detail)}
+              </pre>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <Metric label="Used" value={numberFmt(usedTerms)} />
+              <Metric label="Base quota" value={numberFmt(quotaBase)} />
+              <Metric label="Top-ups" value={numberFmt(quotaTopup)} />
+              <Metric label="Credits balance" value={numberFmt(creditsBal)} />
+              <Metric label="Remaining total" value={numberFmt(remainingTotal)} />
+              <div className="sm:col-span-2 lg:col-span-5 text-xs text-zinc-600 mt-2">
+                Period:{" "}
+                <span className="font-medium text-zinc-900">
+                  {usage?.period?.start ?? "—"}
+                </span>
+                {usage?.period?.end ? (
+                  <>
+                    {" "}
+                    →{" "}
+                    <span className="font-medium text-zinc-900">
+                      {usage.period.end}
+                    </span>
+                  </>
+                ) : null}
+                {quotaTotal ? (
+                  <>
+                    {" "}
+                    • Quota total:{" "}
+                    <span className="font-medium text-zinc-900">
+                      {numberFmt(quotaTotal)}
+                    </span>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          )}
+        </SectionCard>
+
         <SectionCard title="Upload exports (temporary — until Google Ads integration)">
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="rounded-xl border border-zinc-200 bg-white p-4">
