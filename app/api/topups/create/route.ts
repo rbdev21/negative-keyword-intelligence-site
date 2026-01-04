@@ -4,14 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/**
- * Creates a top-up checkout session.
- * NOTE: Stripe wiring comes later — this endpoint exists so the build passes
- * and the UI can call a stable route.
- */
 export async function POST(req: Request) {
   try {
-    // Require auth (consistent with the rest of your API routes)
     const supabase = await createClient();
     const {
       data: { user },
@@ -22,7 +16,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    // Parse request body (optional)
     let body: any = {};
     try {
       body = await req.json();
@@ -30,14 +23,12 @@ export async function POST(req: Request) {
       // allow empty body
     }
 
-    // For now: return 501 so UI can show "coming soon" or you can add Stripe next.
     return NextResponse.json(
       {
         ok: false,
         error: "Top-ups not enabled yet",
         detail: {
-          message:
-            "Top-up checkout is not wired to Stripe yet. This endpoint is a placeholder.",
+          message: "Top-up checkout is not wired to Stripe yet.",
           requested: body ?? null,
         },
       },
