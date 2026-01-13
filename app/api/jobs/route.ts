@@ -21,7 +21,7 @@ function admin() {
   });
 }
 
-// First day of month in UTC (date)
+// First day of month in UTC (date) fallback
 function monthStartUTC(d = new Date()) {
   const y = d.getUTCFullYear();
   const m = d.getUTCMonth();
@@ -29,21 +29,11 @@ function monthStartUTC(d = new Date()) {
   return new Date(ms).toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
-// Efficient CSV row count from uploaded File (counts lines minus header)
-async function countCsvRows(file: File): Promise<number> {
-  const buf = Buffer.from(await file.arrayBuffer());
-  if (buf.length === 0) return 0;
-
-  let lines = 0;
-  for (let i = 0; i < buf.length; i++) {
-    if (buf[i] === 10) lines++;
-  }
-
-  const endsWithNewline = buf[buf.length - 1] === 10;
-  if (!endsWithNewline) lines++;
-
-  // subtract header
-  return Math.max(0, lines - 1);
+// Convert a Date/ISO to YYYY-MM-DD in UTC (date-only)
+function dateOnlyUTC(d: Date) {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
+    .toISOString()
+    .slice(0, 10);
 }
 
 function safeNumber(x: any, fallback = 0): number {
@@ -54,6 +44,118 @@ function safeNumber(x: any, fallback = 0): number {
 function fmt(n: any) {
   const v = safeNumber(n, 0);
   return v.toLocaleString();
+}
+
+// -------- CSV helpers (counts only real rows + applies filters before charging) --------
+
+// Parse one CSV line into fields (handles quotes + commas)
+function parseCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+
+    if (ch === '"') {
+      // Escaped quote
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (ch === "," && !inQuotes) {
+      out.push(cur);
+      cur = "";
+      continue;
+    }
+
+    cur += ch;
+  }
+
+  out.push(cur);
+  return out;
+}
+
+function normHeader(h: string) {
+  return h.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function toNumberLoose(v: string): number {
+  // Handles: "£1.23", "1,234.56", "", etc
+  const cleaned = (v ?? "").replace(/[£,$]/g, "").replace(/,/g, "").trim();
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Counts billable rows in a Search Terms CSV:
+ * - ignores blank lines
+ * - requires non-empty search term cell
+ * - applies minClicks / minCost filters BEFORE charging
+ */
+async function countBillableSearchTerms(
+  file: File,
+  opts: { minClicks: number; minCost: number }
+): Promise<number> {
+  const text = await file.text();
+  if (!text.trim()) return 0;
+
+  // Split lines, remove fully-empty lines
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length <= 1) return 0;
+
+  const header = parseCsvLine(lines[0]);
+  const headerNorm = header.map(normHeader);
+
+  // Try common column names
+  const termIdx =
+    headerNorm.indexOf("search term") !== -1
+      ? headerNorm.indexOf("search term")
+      : headerNorm.indexOf("search term (search query)") !== -1
+      ? headerNorm.indexOf("search term (search query)")
+      : headerNorm.indexOf("search query") !== -1
+      ? headerNorm.indexOf("search query")
+      : -1;
+
+  const clicksIdx =
+    headerNorm.indexOf("clicks") !== -1 ? headerNorm.indexOf("clicks") : -1;
+
+  const costIdx =
+    headerNorm.indexOf("cost") !== -1
+      ? headerNorm.indexOf("cost")
+      : headerNorm.indexOf("cost (gbp)") !== -1
+      ? headerNorm.indexOf("cost (gbp)")
+      : -1;
+
+  // If we can't find the term column, fallback to “non-empty line” count (still ignores blank lines)
+  if (termIdx === -1) {
+    return Math.max(0, lines.length - 1);
+  }
+
+  let count = 0;
+
+  for (let i = 1; i < lines.length; i++) {
+    const cols = parseCsvLine(lines[i]);
+
+    const term = (cols[termIdx] ?? "").trim();
+    if (!term) continue; // ignore blank rows
+
+    // Apply filters if those columns exist; if missing, treat as 0
+    const clicks = clicksIdx !== -1 ? toNumberLoose(cols[clicksIdx] ?? "") : 0;
+    const cost = costIdx !== -1 ? toNumberLoose(cols[costIdx] ?? "") : 0;
+
+    if (clicks < opts.minClicks) continue;
+    if (cost < opts.minCost) continue;
+
+    count++;
+  }
+
+  return count;
 }
 
 export async function POST(req: Request) {
@@ -94,19 +196,47 @@ export async function POST(req: Request) {
       );
     }
 
-    // 3) Count search terms reviewed
-    const termsCount = await countCsvRows(searchFile);
+    // Read filter values (so we can bill *after* filters)
+    const minClicks = safeNumber(form.get("min_clicks"), 3);
+    const minCost = safeNumber(form.get("min_cost"), 0);
+
+    // 3) Count billable search terms (non-empty + filters applied)
+    const termsCount = await countBillableSearchTerms(searchFile, {
+      minClicks,
+      minCost,
+    });
+
     if (termsCount <= 0) {
       return NextResponse.json(
-        { ok: false, error: "Bad Request", detail: "Search Terms CSV is empty." },
+        {
+          ok: false,
+          error: "Bad Request",
+          detail:
+            "No billable rows found. Your Search Terms CSV may be blank or all rows are filtered out (min clicks / min cost).",
+        },
         { status: 400 }
       );
     }
 
     const supabaseAdmin = admin();
 
-    // 4) Reserve quota + credits atomically via RPC
-    const monthStart = monthStartUTC();
+    // 4) Determine billing window start (Stripe current_period_start) if present, else fallback
+    let monthStart = monthStartUTC();
+
+    const { data: subRow, error: subErr } = await supabaseAdmin
+      .from("subscriptions")
+      .select("current_period_start, status")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (!subErr && subRow?.current_period_start) {
+      const d = new Date(subRow.current_period_start);
+      if (!Number.isNaN(d.getTime())) {
+        monthStart = dateOnlyUTC(d);
+      }
+    }
+
+    // 5) Reserve quota + credits atomically via RPC
     const { data: reserveData, error: reserveErr } = await supabaseAdmin.rpc(
       "reserve_terms",
       {
@@ -145,7 +275,7 @@ export async function POST(req: Request) {
             quota,
             used,
             remaining,
-            deficit, // how many additional terms needed (top-up suggestion)
+            deficit,
             hint:
               deficit > 0
                 ? `You need ${fmt(deficit)} more search terms. Add a top-up to continue.`
@@ -156,7 +286,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 5) Start FastAPI job
+    // 6) Start FastAPI job
     const forward = new FormData();
     forward.append("search_terms_file", searchFile);
     forward.append("keywords_file", keywordsFile);
@@ -194,8 +324,7 @@ export async function POST(req: Request) {
     }
 
     if (!startRes.ok || startJson?.ok !== true || !startJson?.job_id) {
-      // IMPORTANT: we already reserved usage, but job creation failed.
-      // For now, we surface error clearly. (Optional next improvement: add a refund_terms RPC.)
+      // NOTE: quota already reserved; later improvement could add refund RPC.
       return NextResponse.json(
         { ok: false, error: "Job start failed", detail: startJson },
         { status: 500 }
@@ -204,7 +333,7 @@ export async function POST(req: Request) {
 
     const jobId: string = startJson.job_id;
 
-    // 6) Persist job row (durable)
+    // 7) Persist job row (durable)
     const nowIso = new Date().toISOString();
 
     const parts: string[] = [];
@@ -239,7 +368,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 7) Return to frontend
+    // 8) Return to frontend
     return NextResponse.json({
       ok: true,
       job_id: jobId,
