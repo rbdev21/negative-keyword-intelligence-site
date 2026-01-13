@@ -6,7 +6,7 @@ import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// ✅ Important: don't set apiVersion unless you must (prevents TS mismatch errors)
+// Don't force apiVersion (avoids type unions causing build issues)
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 function admin() {
@@ -28,7 +28,6 @@ function baseQuotaFor(status: string | null, plan: string | null) {
   // Trial cap = 20,000 terms
   if (status === "trialing") return 20000;
 
-  // Paid plans
   if (plan === "starter") return 100000;
   if (plan === "pro") return 300000;
   if (plan === "scale") return 500000;
@@ -36,7 +35,7 @@ function baseQuotaFor(status: string | null, plan: string | null) {
   return 0;
 }
 
-// Convert unix seconds -> YYYY-MM-DD (UTC)
+// unix seconds -> YYYY-MM-DD (UTC)
 function dateOnlyUTCFromUnix(ts: number | null | undefined) {
   if (!ts) return null;
   const d = new Date(ts * 1000);
@@ -51,23 +50,15 @@ async function upsertUsageWindow(
   periodStartUnix: number | null,
   baseQuota: number
 ) {
-  // month_start is used as your billing period start
   const periodStartDate = dateOnlyUTCFromUnix(periodStartUnix);
   if (!periodStartDate) return;
 
-  // Ensure row exists and align base_quota + terms_quota.
-  // Keep topup_quota as-is; terms_quota should always be base_quota + topup_quota.
-  const { data: existing, error: existingErr } = await sb
+  const { data: existing } = await sb
     .from("user_usage_monthly")
     .select("topup_quota")
     .eq("user_id", userId)
     .eq("month_start", periodStartDate)
     .maybeSingle();
-
-  if (existingErr) {
-    // If read fails, still attempt upsert with topup=0
-    // (better than failing the webhook)
-  }
 
   const topupQuota = Number(existing?.topup_quota ?? 0);
 
@@ -83,10 +74,10 @@ async function upsertUsageWindow(
   );
 }
 
-async function resolveUserIdFromSubscription(sub: Stripe.Subscription, customerId: string) {
+async function resolveUserId(sub: any, customerId: string) {
   // Prefer subscription metadata
-  const subMeta = (sub.metadata?.supabase_user_id as string) || null;
-  if (subMeta) return subMeta;
+  const subUserId = (sub?.metadata?.supabase_user_id as string) || null;
+  if (subUserId) return subUserId;
 
   // Fallback to customer metadata
   const cust = await stripe.customers.retrieve(customerId);
@@ -97,39 +88,40 @@ async function resolveUserIdFromSubscription(sub: Stripe.Subscription, customerI
   return null;
 }
 
-async function handleSubscription(sb: ReturnType<typeof admin>, sub: Stripe.Subscription) {
-  const customerId = typeof sub.customer === "string" ? sub.customer : sub.customer.id;
+async function handleSubscription(sb: ReturnType<typeof admin>, subRaw: any) {
+  const customerId =
+    typeof subRaw.customer === "string" ? subRaw.customer : subRaw.customer?.id;
 
-  const priceId = sub.items?.data?.[0]?.price?.id ?? null;
+  if (!customerId) return;
+
+  const priceId = subRaw?.items?.data?.[0]?.price?.id ?? null;
   const plan = planFromPrice(priceId);
-  const status = sub.status ?? null;
+  const status: string | null = subRaw?.status ?? null;
 
-  const userId = await resolveUserIdFromSubscription(sub, customerId);
-  if (!userId) return; // can't link — ignore safely
+  const userId = await resolveUserId(subRaw, customerId);
+  if (!userId) return;
 
-  // ✅ Store subscription row (upsert by user_id)
+  // ✅ IMPORTANT: cast these two fields because your Stripe types don’t include them
+  const cps: number | null = typeof subRaw?.current_period_start === "number" ? subRaw.current_period_start : null;
+  const cpe: number | null = typeof subRaw?.current_period_end === "number" ? subRaw.current_period_end : null;
+
   await sb.from("subscriptions").upsert(
     {
       user_id: userId,
       stripe_customer_id: customerId,
-      stripe_subscription_id: sub.id,
+      stripe_subscription_id: subRaw.id,
       stripe_price_id: priceId,
       plan,
       status,
-      current_period_start: sub.current_period_start
-        ? new Date(sub.current_period_start * 1000).toISOString()
-        : null,
-      current_period_end: sub.current_period_end
-        ? new Date(sub.current_period_end * 1000).toISOString()
-        : null,
+      current_period_start: cps ? new Date(cps * 1000).toISOString() : null,
+      current_period_end: cpe ? new Date(cpe * 1000).toISOString() : null,
       updated_at: new Date().toISOString(),
     },
     { onConflict: "user_id" }
   );
 
-  // ✅ Ensure usage window exists + quota aligns
   const baseQuota = baseQuotaFor(status, plan);
-  await upsertUsageWindow(sb, userId, sub.current_period_start ?? null, baseQuota);
+  await upsertUsageWindow(sb, userId, cps, baseQuota);
 }
 
 export async function POST(req: Request) {
@@ -144,7 +136,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Stripe requires raw text body for signature verification
     const body = await req.text();
 
     let event: Stripe.Event;
@@ -163,11 +154,10 @@ export async function POST(req: Request) {
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
 
-        // For subscriptions, pull the subscription and normalize handling
         if (session.subscription) {
           const subId = String(session.subscription);
           const sub = await stripe.subscriptions.retrieve(subId);
-          await handleSubscription(sb, sub);
+          await handleSubscription(sb, sub as any);
         }
         break;
       }
@@ -175,14 +165,12 @@ export async function POST(req: Request) {
       case "customer.subscription.created":
       case "customer.subscription.updated":
       case "customer.subscription.deleted": {
-        // ✅ Explicit cast fixes the TS error you hit
-        const sub = event.data.object as Stripe.Subscription;
+        const sub = event.data.object as any;
         await handleSubscription(sb, sub);
         break;
       }
 
       default:
-        // Ignore unhandled events
         break;
     }
 
