@@ -6,9 +6,8 @@ import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: "2024-06-20",
-});
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+
 
 function admin() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
