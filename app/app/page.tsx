@@ -210,6 +210,10 @@ export default function AppPage() {
   const [usage, setUsage] = useState<UsageResponse | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
 
+  // Billing UI state
+  const [billingLoading, setBillingLoading] = useState<null | "starter" | "pro" | "scale">(null);
+  const [billingMsg, setBillingMsg] = useState<string>("");
+
   // Job mode state
   const [jobStatus, setJobStatus] = useState<JobStatus>("idle");
   const [jobId, setJobId] = useState<string | null>(null);
@@ -266,7 +270,11 @@ export default function AppPage() {
       }
       setUsage(j);
     } catch (e: any) {
-      setUsage({ ok: false, error: "Failed to fetch usage", detail: e?.message ?? String(e) });
+      setUsage({
+        ok: false,
+        error: "Failed to fetch usage",
+        detail: e?.message ?? String(e),
+      });
     } finally {
       setUsageLoading(false);
     }
@@ -274,8 +282,51 @@ export default function AppPage() {
 
   useEffect(() => {
     refreshUsage();
+    // If Stripe sends them back to /app?success=1 (or similar), refresh usage again
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("success") || url.searchParams.get("canceled")) {
+      refreshUsage();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  async function startSubscription(plan: "starter" | "pro" | "scale") {
+    setBillingMsg("");
+    setBillingLoading(plan);
+
+    try {
+      const r = await fetch("/api/billing/subscribe", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ plan }),
+      });
+
+      const t = await r.text();
+      let j: any;
+      try {
+        j = JSON.parse(t);
+      } catch {
+        j = { ok: false, error: "Non-JSON response", detail: t };
+      }
+
+      if (!r.ok || j?.ok !== true) {
+        setBillingMsg(errorToText(j?.error ?? j?.detail ?? j));
+        return;
+      }
+
+      const url = j?.url;
+      if (!url || typeof url !== "string") {
+        setBillingMsg("Missing checkout URL from server.");
+        return;
+      }
+
+      window.location.href = url;
+    } catch (e: any) {
+      setBillingMsg(e?.message ?? "Failed to start checkout");
+    } finally {
+      setBillingLoading(null);
+    }
+  }
 
   function clearPoll() {
     if (pollTimerRef.current) {
@@ -315,7 +366,6 @@ export default function AppPage() {
           };
         }
 
-        // Helpful debug hook
         (window as any).__lastJobPoll = data;
 
         const status = (data.status ??
@@ -358,7 +408,6 @@ export default function AppPage() {
             );
           }
 
-          // Refresh usage once the run completes (quota/credits have been consumed)
           refreshUsage();
           return;
         }
@@ -372,7 +421,6 @@ export default function AppPage() {
           return;
         }
 
-        // error
         setJobStatus("error");
         setLoading(false);
         setResp({
@@ -412,9 +460,7 @@ export default function AppPage() {
       await fetch(`/api/jobs/${encodeURIComponent(jobId)}/cancel`, {
         method: "POST",
       });
-    } catch {
-      // ignore
-    }
+    } catch {}
 
     setJobStatus("canceled");
     setJobProgress(100);
@@ -487,7 +533,6 @@ export default function AppPage() {
           detail: data?.detail ?? data,
         });
 
-        // If quota exceeded, show a clearer message and refresh usage
         if (r.status === 402 && data?.error === "Quota exceeded") {
           const d = data?.detail ?? {};
           const requested = Number(d?.requested ?? 0);
@@ -506,7 +551,9 @@ export default function AppPage() {
         return;
       }
 
-      const newJobId: string | undefined = data?.job_id || data?.jobId || data?.id;
+      const newJobId: string | undefined =
+        data?.job_id || data?.jobId || data?.id;
+
       if (!newJobId) {
         setLoading(false);
         setJobStatus("error");
@@ -558,53 +605,159 @@ export default function AppPage() {
       </header>
 
       <main className="mx-auto max-w-6xl px-6 py-10 space-y-6">
-        {/* Usage widget */}
+        {/* Usage widget + upgrade */}
         <SectionCard title="Usage this period">
           {usageLoading ? (
             <p className="text-sm text-zinc-600">Loading usage…</p>
           ) : usage?.ok === false ? (
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              <div className="font-semibold">{usage.error || "Failed to load usage"}</div>
+              <div className="font-semibold">
+                {usage.error || "Failed to load usage"}
+              </div>
               <pre className="mt-2 whitespace-pre-wrap text-xs text-red-700">
                 {errorToText(usage.detail)}
               </pre>
             </div>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-              <Metric label="Used" value={numberFmt(usedTerms)} />
-              <Metric label="Base quota" value={numberFmt(quotaBase)} />
-              <Metric label="Top-ups" value={numberFmt(quotaTopup)} />
-              <Metric label="Credits balance" value={numberFmt(creditsBal)} />
-              <Metric label="Remaining total" value={numberFmt(remainingTotal)} />
-              <div className="sm:col-span-2 lg:col-span-5 text-xs text-zinc-600 mt-2">
-                Period:{" "}
-                <span className="font-medium text-zinc-900">
-                  {usage?.period?.start ?? "—"}
-                </span>
-                {usage?.period?.end ? (
-                  <>
-                    {" "}
-                    →{" "}
-                    <span className="font-medium text-zinc-900">
-                      {usage.period.end}
-                    </span>
-                  </>
-                ) : null}
-                {quotaTotal ? (
-                  <>
-                    {" "}
-                    • Quota total:{" "}
-                    <span className="font-medium text-zinc-900">
-                      {numberFmt(quotaTotal)}
-                    </span>
-                  </>
-                ) : null}
+            <>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                <Metric label="Used" value={numberFmt(usedTerms)} />
+                <Metric label="Base quota" value={numberFmt(quotaBase)} />
+                <Metric label="Top-ups" value={numberFmt(quotaTopup)} />
+                <Metric label="Credits balance" value={numberFmt(creditsBal)} />
+                <Metric label="Remaining total" value={numberFmt(remainingTotal)} />
+                <div className="sm:col-span-2 lg:col-span-5 text-xs text-zinc-600 mt-2">
+                  Period:{" "}
+                  <span className="font-medium text-zinc-900">
+                    {usage?.period?.start ?? "—"}
+                  </span>
+                  {usage?.period?.end ? (
+                    <>
+                      {" "}
+                      →{" "}
+                      <span className="font-medium text-zinc-900">
+                        {usage.period.end}
+                      </span>
+                    </>
+                  ) : null}
+                  {quotaTotal ? (
+                    <>
+                      {" "}
+                      • Quota total:{" "}
+                      <span className="font-medium text-zinc-900">
+                        {numberFmt(quotaTotal)}
+                      </span>
+                    </>
+                  ) : null}
+                </div>
               </div>
-            </div>
+
+              {/* Upgrade section */}
+              <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-5">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="text-sm font-semibold text-zinc-900">
+                      Upgrade to a paid plan
+                    </div>
+                    <div className="text-xs text-zinc-600">
+                      Keep running audits after your trial ends (or increase your monthly allowance).
+                    </div>
+                  </div>
+                  <button
+                    onClick={refreshUsage}
+                    className="mt-3 sm:mt-0 inline-flex items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
+                    disabled={usageLoading}
+                  >
+                    Refresh
+                  </button>
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <button
+                    onClick={() => startSubscription("starter")}
+                    disabled={!!billingLoading}
+                    className={[
+                      "rounded-2xl border px-4 py-4 text-left transition",
+                      billingLoading === "starter"
+                        ? "border-zinc-200 bg-zinc-100 text-zinc-600"
+                        : "border-zinc-200 bg-white hover:bg-zinc-50",
+                    ].join(" ")}
+                  >
+                    <div className="text-sm font-semibold text-zinc-900">
+                      Starter
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-600">
+                      100,000 terms / month
+                    </div>
+                    <div className="mt-3 text-xs font-semibold text-zinc-900">
+                      {billingLoading === "starter" ? "Opening checkout…" : "Choose Starter →"}
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => startSubscription("pro")}
+                    disabled={!!billingLoading}
+                    className={[
+                      "rounded-2xl border px-4 py-4 text-left transition",
+                      billingLoading === "pro"
+                        ? "border-zinc-200 bg-zinc-100 text-zinc-600"
+                        : "border-zinc-900 bg-white hover:bg-zinc-50",
+                    ].join(" ")}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm font-semibold text-zinc-900">
+                        Pro
+                      </div>
+                      <span className="rounded-full bg-zinc-900 px-2.5 py-1 text-[10px] font-semibold text-white">
+                        Most popular
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-600">
+                      300,000 terms / month
+                    </div>
+                    <div className="mt-3 text-xs font-semibold text-zinc-900">
+                      {billingLoading === "pro" ? "Opening checkout…" : "Choose Pro →"}
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => startSubscription("scale")}
+                    disabled={!!billingLoading}
+                    className={[
+                      "rounded-2xl border px-4 py-4 text-left transition",
+                      billingLoading === "scale"
+                        ? "border-zinc-200 bg-zinc-100 text-zinc-600"
+                        : "border-zinc-200 bg-white hover:bg-zinc-50",
+                    ].join(" ")}
+                  >
+                    <div className="text-sm font-semibold text-zinc-900">
+                      Scale
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-600">
+                      500,000 terms / month
+                    </div>
+                    <div className="mt-3 text-xs font-semibold text-zinc-900">
+                      {billingLoading === "scale" ? "Opening checkout…" : "Choose Scale →"}
+                    </div>
+                  </button>
+                </div>
+
+                {billingMsg ? (
+                  <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    {billingMsg}
+                  </div>
+                ) : null}
+
+                <div className="mt-4 text-xs text-zinc-500">
+                  Trial: 7 days • Cap: 20,000 search terms • You can upgrade anytime.
+                </div>
+              </div>
+            </>
           )}
         </SectionCard>
 
         <SectionCard title="Upload exports (temporary — until Google Ads integration)">
+          {/* (rest of your original file unchanged) */}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="rounded-xl border border-zinc-200 bg-white p-4">
               <div className="text-sm font-semibold text-zinc-900">

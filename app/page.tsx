@@ -18,13 +18,7 @@ function Badge({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Card({
-  title,
-  desc,
-}: {
-  title: string;
-  desc: string;
-}) {
+function Card({ title, desc }: { title: string; desc: string }) {
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm transition hover:shadow-md">
       <h3 className="text-base font-semibold text-zinc-900">{title}</h3>
@@ -70,7 +64,8 @@ function PricingTier({
           <span className="pb-1 text-sm text-zinc-500">/ month</span>
         </div>
         <p className="mt-2 text-sm text-zinc-600">
-          Includes <span className="font-medium text-zinc-900">{allowance}</span>{" "}
+          Includes{" "}
+          <span className="font-medium text-zinc-900">{allowance}</span>{" "}
           search terms reviewed.
         </p>
       </div>
@@ -126,10 +121,16 @@ export default function HomePage() {
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <LogoMark />
           <nav className="flex items-center gap-3">
-            <a href="#pricing" className="hidden text-sm text-zinc-600 hover:text-zinc-900 sm:inline">
+            <a
+              href="#pricing"
+              className="hidden text-sm text-zinc-600 hover:text-zinc-900 sm:inline"
+            >
               Pricing
             </a>
-            <a href="#how" className="hidden text-sm text-zinc-600 hover:text-zinc-900 sm:inline">
+            <a
+              href="#how"
+              className="hidden text-sm text-zinc-600 hover:text-zinc-900 sm:inline"
+            >
               How it works
             </a>
             <Link
@@ -158,8 +159,9 @@ export default function HomePage() {
               </h1>
 
               <p className="mt-5 text-lg leading-relaxed text-zinc-600">
-                TermTidy connects to your Google Ads account, audits search terms, and recommends
-                precise negative keywords to cut wasted spend — without harming good traffic.
+                TermTidy connects to your Google Ads account, audits search
+                terms, and recommends precise negative keywords to cut wasted
+                spend — without harming good traffic.
               </p>
 
               <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -178,13 +180,19 @@ export default function HomePage() {
               </div>
 
               <p className="mt-3 text-sm text-zinc-500">
-                7-day free trial includes <span className="font-medium text-zinc-900">20,000 search terms</span> reviewed.
+                7-day free trial includes{" "}
+                <span className="font-medium text-zinc-900">
+                  20,000 search terms
+                </span>{" "}
+                reviewed.
               </p>
             </div>
 
             <div className="w-full max-w-xl rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-zinc-900">What you get</p>
+                <p className="text-sm font-semibold text-zinc-900">
+                  What you get
+                </p>
                 <span className="rounded-full bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700">
                   In minutes
                 </span>
@@ -192,21 +200,29 @@ export default function HomePage() {
 
               <div className="mt-5 space-y-4">
                 <div className="rounded-xl border border-zinc-200 p-4">
-                  <p className="text-sm font-semibold text-zinc-900">1) Connect Google Ads</p>
+                  <p className="text-sm font-semibold text-zinc-900">
+                    1) Connect Google Ads
+                  </p>
                   <p className="mt-1 text-sm text-zinc-600">
-                    Secure OAuth connection — pull search terms & keywords directly.
+                    Secure OAuth connection — pull search terms & keywords
+                    directly.
                   </p>
                 </div>
                 <div className="rounded-xl border border-zinc-200 p-4">
-                  <p className="text-sm font-semibold text-zinc-900">2) Run an audit</p>
+                  <p className="text-sm font-semibold text-zinc-900">
+                    2) Run an audit
+                  </p>
                   <p className="mt-1 text-sm text-zinc-600">
                     AI flags irrelevant queries with spend and intent context.
                   </p>
                 </div>
                 <div className="rounded-xl border border-zinc-200 p-4">
-                  <p className="text-sm font-semibold text-zinc-900">3) Apply negatives</p>
+                  <p className="text-sm font-semibold text-zinc-900">
+                    3) Apply negatives
+                  </p>
                   <p className="mt-1 text-sm text-zinc-600">
-                    Export-ready list + estimated savings. Schedule weekly/monthly.
+                    Export-ready list + estimated savings. Schedule
+                    weekly/monthly.
                   </p>
                 </div>
               </div>
@@ -216,15 +232,21 @@ export default function HomePage() {
           {/* Social proof strip */}
           <div className="mt-14 grid gap-3 rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm sm:grid-cols-3">
             <div>
-              <p className="text-sm font-semibold text-zinc-900">Cleaner search terms</p>
+              <p className="text-sm font-semibold text-zinc-900">
+                Cleaner search terms
+              </p>
               <p className="mt-1 text-sm text-zinc-600">Less waste, more signal.</p>
             </div>
             <div>
               <p className="text-sm font-semibold text-zinc-900">Brand-safe</p>
-              <p className="mt-1 text-sm text-zinc-600">Protect your branded traffic.</p>
+              <p className="mt-1 text-sm text-zinc-600">
+                Protect your branded traffic.
+              </p>
             </div>
             <div>
-              <p className="text-sm font-semibold text-zinc-900">Client-ready output</p>
+              <p className="text-sm font-semibold text-zinc-900">
+                Client-ready output
+              </p>
               <p className="mt-1 text-sm text-zinc-600">Export negatives instantly.</p>
             </div>
           </div>
@@ -234,10 +256,13 @@ export default function HomePage() {
         <section id="how" className="py-10 sm:py-14">
           <div className="flex items-end justify-between gap-6">
             <div>
-              <h2 className="text-2xl font-semibold tracking-tight">How TermTidy works</h2>
+              <h2 className="text-2xl font-semibold tracking-tight">
+                How TermTidy works
+              </h2>
               <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-600">
-                TermTidy compares your search terms to your keyword targets, detects mismatched intent,
-                and recommends safe exact-match negatives — with brand protection built in.
+                TermTidy compares your search terms to your keyword targets,
+                detects mismatched intent, and recommends safe exact-match
+                negatives — with brand protection built in.
               </p>
             </div>
           </div>
@@ -264,7 +289,8 @@ export default function HomePage() {
             <div>
               <h2 className="text-2xl font-semibold tracking-tight">Pricing</h2>
               <p className="mt-2 text-sm text-zinc-600">
-                Plans are based on the number of search terms reviewed per month. Need more? Add a top-up anytime.
+                Plans are based on the number of search terms reviewed per month.
+                Need more? Add a top-up anytime.
               </p>
             </div>
             <Link
@@ -276,33 +302,27 @@ export default function HomePage() {
           </div>
 
           <div className="mt-8 grid gap-4 lg:grid-cols-3">
+            <PricingTier name="Starter" price="£10" allowance="100,000" />
             <PricingTier
-              name="Starter"
+              name="Pro"
               price="£20"
-              allowance="100,000"
-            />
-            <PricingTier
-              name="Growth"
-              price="£40"
               allowance="300,000"
               highlight
             />
-            <PricingTier
-              name="Scale"
-              price="£60"
-              allowance="1,000,000"
-            />
+            <PricingTier name="Scale" price="£30" allowance="500,000" />
           </div>
 
           <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6 text-sm text-zinc-600 shadow-sm">
             <p className="font-semibold text-zinc-900">Free trial</p>
             <p className="mt-1">
-              7-day free trial includes <span className="font-medium text-zinc-900">20,000</span> search terms reviewed.
-              Cancel anytime.
+              7-day free trial includes{" "}
+              <span className="font-medium text-zinc-900">20,000</span> search
+              terms reviewed. Cancel anytime.
             </p>
             <p className="mt-3">
-              <span className="font-medium text-zinc-900">Top-ups:</span> If you exceed your allowance, you’ll be able to buy
-              additional search term credits inside the app.
+              <span className="font-medium text-zinc-900">Top-ups:</span> If you
+              exceed your allowance, you’ll be able to buy additional search
+              term credits inside the app.
             </p>
           </div>
         </section>
@@ -315,16 +335,26 @@ export default function HomePage() {
               <img src="/logo.svg" alt="TermTidy" className="h-8 w-8" />
               <div>
                 <p className="font-semibold text-zinc-900">TermTidy</p>
-                <p className="text-zinc-500">Negative Keyword Intelligence for Google Ads</p>
+                <p className="text-zinc-500">
+                  Negative Keyword Intelligence for Google Ads
+                </p>
               </div>
             </div>
             <div className="flex items-center gap-4">
-              <a className="hover:text-zinc-900" href="#pricing">Pricing</a>
-              <a className="hover:text-zinc-900" href="#how">How it works</a>
-              <Link className="hover:text-zinc-900" href="/signup">Try for free</Link>
+              <a className="hover:text-zinc-900" href="#pricing">
+                Pricing
+              </a>
+              <a className="hover:text-zinc-900" href="#how">
+                How it works
+              </a>
+              <Link className="hover:text-zinc-900" href="/signup">
+                Try for free
+              </Link>
             </div>
           </div>
-          <p className="mt-8 text-xs">© {new Date().getFullYear()} TermTidy. All rights reserved.</p>
+          <p className="mt-8 text-xs">
+            © {new Date().getFullYear()} TermTidy. All rights reserved.
+          </p>
         </footer>
       </main>
     </div>
