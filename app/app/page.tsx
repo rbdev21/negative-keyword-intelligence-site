@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 type Stats = {
   initial_rows?: number;
@@ -138,7 +139,9 @@ function downloadCsv(filename: string, rows: Record<string, any>[]) {
     ...rows.map((r) => headers.map((h) => escape(r[h])).join(",")),
   ];
 
-  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const blob = new Blob([lines.join("\n")], {
+    type: "text/csv;charset=utf-8;",
+  });
   const url = URL.createObjectURL(blob);
 
   const a = document.createElement("a");
@@ -196,6 +199,10 @@ function ProgressBar({ value }: { value: number }) {
 }
 
 export default function AppPage() {
+  // Supabase client (browser)
+  const supabase = useMemo(() => createClient(), []);
+  const UPLOADS_BUCKET = "termtidy-uploads"; // must match your Supabase bucket name
+
   const [searchFile, setSearchFile] = useState<File | null>(null);
   const [keywordsFile, setKeywordsFile] = useState<File | null>(null);
 
@@ -211,8 +218,13 @@ export default function AppPage() {
   const [usageLoading, setUsageLoading] = useState(false);
 
   // Billing UI state
-  const [billingLoading, setBillingLoading] = useState<null | "starter" | "pro" | "scale">(null);
+  const [billingLoading, setBillingLoading] = useState<
+    null | "starter" | "pro" | "scale"
+  >(null);
   const [billingMsg, setBillingMsg] = useState<string>("");
+
+  // Upload state
+  const [uploading, setUploading] = useState(false);
 
   // Job mode state
   const [jobStatus, setJobStatus] = useState<JobStatus>("idle");
@@ -282,7 +294,6 @@ export default function AppPage() {
 
   useEffect(() => {
     refreshUsage();
-    // If Stripe sends them back to /app?success=1 (or similar), refresh usage again
     const url = new URL(window.location.href);
     if (url.searchParams.get("success") || url.searchParams.get("canceled")) {
       refreshUsage();
@@ -491,28 +502,71 @@ export default function AppPage() {
     abortRef.current = new AbortController();
 
     try {
-      const form = new FormData();
-      form.append("search_terms_file", searchFile);
-      form.append("keywords_file", keywordsFile);
+      // 1) ensure user
+      const { data: u, error: uErr } = await supabase.auth.getUser();
+      const user = u?.user;
+      if (uErr || !user) {
+        setLoading(false);
+        setJobStatus("error");
+        setResp({ ok: false, error: "Unauthorized", detail: uErr?.message ?? "Not logged in" });
+        setJobMessage("Please log in again.");
+        return;
+      }
 
-      form.append("min_clicks", String(minClicks));
-      form.append("min_cost", String(minCost));
-      form.append("similarity_threshold", String(similarity));
-      form.append("use_llm", String(useLLM));
-      form.append("batch_size", String(batchSize));
-      form.append("currency", "GBP");
-      form.append(
-        "brand_terms",
-        brandTerms
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean)
-          .join(",")
-      );
+      // 2) upload to Storage (direct)
+      setUploading(true);
+      setJobMessage("Uploading files…");
+
+      const runId =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+      const basePath = `${user.id}/${runId}`;
+      const searchPath = `${basePath}/search_terms.csv`;
+      const keywordsPath = `${basePath}/keywords.csv`;
+
+      const up1 = await supabase.storage
+        .from(UPLOADS_BUCKET)
+        .upload(searchPath, searchFile, {
+          upsert: true,
+          contentType: "text/csv",
+        });
+
+      if (up1.error) throw new Error(`Upload failed (search terms): ${up1.error.message}`);
+
+      const up2 = await supabase.storage
+        .from(UPLOADS_BUCKET)
+        .upload(keywordsPath, keywordsFile, {
+          upsert: true,
+          contentType: "text/csv",
+        });
+
+      if (up2.error) throw new Error(`Upload failed (keywords): ${up2.error.message}`);
+
+      setUploading(false);
+
+      // 3) start job with JSON payload (small)
+      setJobMessage("Queued…");
 
       const r = await fetch("/api/jobs", {
         method: "POST",
-        body: form,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          search_path: searchPath,
+          keywords_path: keywordsPath,
+          min_clicks: minClicks,
+          min_cost: minCost,
+          similarity_threshold: similarity,
+          use_llm: useLLM,
+          batch_size: batchSize,
+          currency: "GBP",
+          brand_terms: brandTerms
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean)
+            .join(","),
+        }),
         signal: abortRef.current.signal,
       });
 
@@ -551,8 +605,7 @@ export default function AppPage() {
         return;
       }
 
-      const newJobId: string | undefined =
-        data?.job_id || data?.jobId || data?.id;
+      const newJobId: string | undefined = data?.job_id || data?.jobId || data?.id;
 
       if (!newJobId) {
         setLoading(false);
@@ -570,14 +623,15 @@ export default function AppPage() {
       await pollJob(newJobId);
     } catch (e: any) {
       if (e?.name === "AbortError") return;
+      setUploading(false);
       setLoading(false);
       setJobStatus("error");
       setResp({
         ok: false,
-        error: "Failed to fetch",
+        error: "Failed",
         detail: e?.message ?? String(e),
       });
-      setJobMessage(e?.message ?? "Failed to fetch");
+      setJobMessage(e?.message ?? "Failed");
     }
   }
 
@@ -591,6 +645,8 @@ export default function AppPage() {
   const quotaTotal = Number(usage?.quota?.total ?? (quotaBase + quotaTopup));
   const creditsBal = Number(usage?.credits?.balance ?? 0);
   const remainingTotal = Number(usage?.remaining_total ?? 0);
+
+  const disableRun = loading || uploading;
 
   return (
     <div className="min-h-screen bg-zinc-50 text-zinc-900">
@@ -625,7 +681,10 @@ export default function AppPage() {
                 <Metric label="Base quota" value={numberFmt(quotaBase)} />
                 <Metric label="Top-ups" value={numberFmt(quotaTopup)} />
                 <Metric label="Credits balance" value={numberFmt(creditsBal)} />
-                <Metric label="Remaining total" value={numberFmt(remainingTotal)} />
+                <Metric
+                  label="Remaining total"
+                  value={numberFmt(remainingTotal)}
+                />
                 <div className="sm:col-span-2 lg:col-span-5 text-xs text-zinc-600 mt-2">
                   Period:{" "}
                   <span className="font-medium text-zinc-900">
@@ -660,7 +719,8 @@ export default function AppPage() {
                       Upgrade to a paid plan
                     </div>
                     <div className="text-xs text-zinc-600">
-                      Keep running audits after your trial ends (or increase your monthly allowance).
+                      Keep running audits after your trial ends (or increase your
+                      monthly allowance).
                     </div>
                   </div>
                   <button
@@ -690,7 +750,9 @@ export default function AppPage() {
                       100,000 terms / month
                     </div>
                     <div className="mt-3 text-xs font-semibold text-zinc-900">
-                      {billingLoading === "starter" ? "Opening checkout…" : "Choose Starter →"}
+                      {billingLoading === "starter"
+                        ? "Opening checkout…"
+                        : "Choose Starter →"}
                     </div>
                   </button>
 
@@ -716,7 +778,9 @@ export default function AppPage() {
                       300,000 terms / month
                     </div>
                     <div className="mt-3 text-xs font-semibold text-zinc-900">
-                      {billingLoading === "pro" ? "Opening checkout…" : "Choose Pro →"}
+                      {billingLoading === "pro"
+                        ? "Opening checkout…"
+                        : "Choose Pro →"}
                     </div>
                   </button>
 
@@ -737,7 +801,9 @@ export default function AppPage() {
                       500,000 terms / month
                     </div>
                     <div className="mt-3 text-xs font-semibold text-zinc-900">
-                      {billingLoading === "scale" ? "Opening checkout…" : "Choose Scale →"}
+                      {billingLoading === "scale"
+                        ? "Opening checkout…"
+                        : "Choose Scale →"}
                     </div>
                   </button>
                 </div>
@@ -749,7 +815,8 @@ export default function AppPage() {
                 ) : null}
 
                 <div className="mt-4 text-xs text-zinc-500">
-                  Trial: 7 days • Cap: 20,000 search terms • You can upgrade anytime.
+                  Trial: 7 days • Cap: 20,000 search terms • You can upgrade
+                  anytime.
                 </div>
               </div>
             </>
@@ -757,7 +824,6 @@ export default function AppPage() {
         </SectionCard>
 
         <SectionCard title="Upload exports (temporary — until Google Ads integration)">
-          {/* (rest of your original file unchanged) */}
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="rounded-xl border border-zinc-200 bg-white p-4">
               <div className="text-sm font-semibold text-zinc-900">
@@ -897,25 +963,25 @@ export default function AppPage() {
             <div className="flex flex-wrap items-center gap-3">
               <button
                 onClick={runAudit}
-                disabled={loading}
+                disabled={disableRun}
                 className={[
                   "inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold transition",
-                  loading
+                  disableRun
                     ? "bg-zinc-300 text-zinc-600"
                     : "bg-zinc-900 text-white hover:bg-zinc-800",
                 ].join(" ")}
               >
-                {loading ? "Working…" : "Run audit"}
+                {uploading ? "Uploading…" : loading ? "Working…" : "Run audit"}
               </button>
 
               <button
                 onClick={() =>
                   downloadCsv("termtidy_negative_keywords.csv", results)
                 }
-                disabled={loading || results.length === 0}
+                disabled={disableRun || results.length === 0}
                 className={[
                   "inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold transition",
-                  loading || results.length === 0
+                  disableRun || results.length === 0
                     ? "border border-zinc-200 bg-white text-zinc-400"
                     : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50",
                 ].join(" ")}
