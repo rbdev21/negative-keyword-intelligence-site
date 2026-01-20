@@ -1,5 +1,6 @@
 "use client";
 
+import Papa from "papaparse";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
@@ -153,6 +154,91 @@ function downloadCsv(filename: string, rows: Record<string, any>[]) {
   URL.revokeObjectURL(url);
 }
 
+function normalizeHeader(h: any) {
+  return String(h ?? "").trim().toLowerCase();
+}
+
+function findColumn(fields: string[] | undefined, candidates: string[]) {
+  if (!fields?.length) return null;
+  const set = new Set(fields);
+  for (const c of candidates) {
+    if (set.has(c)) return c;
+  }
+  return null;
+}
+
+function moneyToFloat(value: any) {
+  const s = String(value ?? "")
+    .replace(/,/g, "")
+    .replace(/[^\d.\-]/g, "");
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function estimateBillableCount(
+  file: File,
+  minClicks: number,
+  minCost: number
+): Promise<number> {
+  return new Promise((resolve, reject) => {
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      transformHeader: normalizeHeader,
+      complete: (results) => {
+        if (results.errors?.length) {
+          reject(new Error(results.errors[0]?.message || "CSV parse error"));
+          return;
+        }
+
+        const rows = (results.data as Record<string, any>[]) ?? [];
+        const fields =
+          (results.meta?.fields as string[] | undefined)?.map(normalizeHeader) ??
+          [];
+
+        const termCol = findColumn(fields, [
+          "search term",
+          "search term (search query)",
+          "search query",
+          "query",
+        ]);
+        const clicksCol = findColumn(fields, ["clicks"]);
+        const costCol = findColumn(fields, ["cost", "cost (gbp)"]);
+
+        let filtered = rows;
+
+        if (termCol) {
+          filtered = filtered.filter((row) => {
+            const term = String(row?.[termCol] ?? "").trim();
+            return term !== "";
+          });
+        } else {
+          filtered = filtered.filter((row) =>
+            Object.values(row ?? {}).some((v) => String(v ?? "").trim() !== "")
+          );
+        }
+
+        if (clicksCol) {
+          filtered = filtered.filter((row) => {
+            const clicks = Number(row?.[clicksCol] ?? 0);
+            return Number.isFinite(clicks) && clicks >= minClicks;
+          });
+        }
+
+        if (costCol) {
+          filtered = filtered.filter((row) => {
+            const cost = moneyToFloat(row?.[costCol]);
+            return cost >= minCost;
+          });
+        }
+
+        resolve(filtered.length);
+      },
+      error: (err) => reject(err),
+    });
+  });
+}
+
 function clampProgress(p: any): number {
   if (typeof p !== "number" || !Number.isFinite(p)) return 0;
   if (p >= 0 && p <= 1) return Math.round(p * 100);
@@ -212,6 +298,8 @@ export default function AppPage() {
   const [useLLM, setUseLLM] = useState(true);
   const [batchSize, setBatchSize] = useState(5);
   const [brandTerms, setBrandTerms] = useState("");
+  const [estimateCount, setEstimateCount] = useState<number | null>(null);
+  const [estimateLoading, setEstimateLoading] = useState(false);
 
   // Usage widget state
   const [usage, setUsage] = useState<UsageResponse | null>(null);
@@ -300,6 +388,33 @@ export default function AppPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    let canceled = false;
+
+    const runEstimate = async () => {
+      if (!searchFile) {
+        setEstimateCount(null);
+        setEstimateLoading(false);
+        return;
+      }
+
+      setEstimateLoading(true);
+      try {
+        const count = await estimateBillableCount(searchFile, minClicks, minCost);
+        if (!canceled) setEstimateCount(count);
+      } catch {
+        if (!canceled) setEstimateCount(null);
+      } finally {
+        if (!canceled) setEstimateLoading(false);
+      }
+    };
+
+    runEstimate();
+    return () => {
+      canceled = true;
+    };
+  }, [searchFile, minClicks, minCost]);
 
   async function startSubscription(plan: "starter" | "pro" | "scale") {
     setBillingMsg("");
@@ -961,6 +1076,19 @@ export default function AppPage() {
 
           <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex flex-wrap items-center gap-3">
+              <div className="w-full">
+                {estimateLoading && (
+                  <p className="text-sm text-zinc-600">
+                    Estimating billable rows…
+                  </p>
+                )}
+                {estimateCount !== null && !estimateLoading && (
+                  <p className="text-sm font-semibold text-zinc-900">
+                    Estimated billable search terms:{" "}
+                    {estimateCount.toLocaleString()}
+                  </p>
+                )}
+              </div>
               <button
                 onClick={runAudit}
                 disabled={disableRun}
