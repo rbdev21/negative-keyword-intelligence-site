@@ -296,7 +296,6 @@ export default function AppPage() {
   const [minCost, setMinCost] = useState(0);
   const [similarity, setSimilarity] = useState(0.75);
   const [useLLM, setUseLLM] = useState(true);
-  const [batchSize, setBatchSize] = useState(5);
   const [brandTerms, setBrandTerms] = useState("");
   const [estimateCount, setEstimateCount] = useState<number | null>(null);
   const [estimateLoading, setEstimateLoading] = useState(false);
@@ -674,7 +673,6 @@ export default function AppPage() {
           min_cost: minCost,
           similarity_threshold: similarity,
           use_llm: useLLM,
-          batch_size: batchSize,
           currency: "GBP",
           brand_terms: brandTerms
             .split(",")
@@ -1058,19 +1056,6 @@ export default function AppPage() {
                 />
               </label>
 
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <label className="text-xs text-zinc-700">
-                  Batch size
-                  <input
-                    value={batchSize}
-                    onChange={(e) => setBatchSize(Number(e.target.value))}
-                    type="number"
-                    min="1"
-                    max="50"
-                    className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
-                  />
-                </label>
-              </div>
             </div>
           </div>
 
