@@ -295,7 +295,6 @@ export default function AppPage() {
   const [minClicks, setMinClicks] = useState(3);
   const [minCost, setMinCost] = useState(0);
   const [similarity, setSimilarity] = useState(0.75);
-  const [useLLM, setUseLLM] = useState(true);
   const [brandTerms, setBrandTerms] = useState("");
   const [estimateCount, setEstimateCount] = useState<number | null>(null);
   const [estimateLoading, setEstimateLoading] = useState(false);
@@ -672,7 +671,7 @@ export default function AppPage() {
           min_clicks: minClicks,
           min_cost: minCost,
           similarity_threshold: similarity,
-          use_llm: useLLM,
+          use_llm: true,
           currency: "GBP",
           brand_terms: brandTerms
             .split(",")
@@ -1033,19 +1032,6 @@ export default function AppPage() {
                 AI + brand protection
               </div>
 
-              <div className="mt-3 flex items-center gap-3">
-                <input
-                  id="use-llm"
-                  checked={useLLM}
-                  onChange={(e) => setUseLLM(e.target.checked)}
-                  type="checkbox"
-                  className="h-4 w-4"
-                />
-                <label htmlFor="use-llm" className="text-sm text-zinc-700">
-                  Use AI decisions (recommended)
-                </label>
-              </div>
-
               <label className="mt-3 block text-xs text-zinc-700">
                 Brand terms (comma separated)
                 <input
@@ -1300,7 +1286,6 @@ export default function AppPage() {
                     <th className="py-2 text-left">Conv.</th>
                     <th className="py-2 text-left">Risk</th>
                     <th className="py-2 text-left">Closest keyword</th>
-                    <th className="py-2 text-left">Reason</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1321,9 +1306,6 @@ export default function AppPage() {
                       </td>
                       <td className="py-2 pr-4">{r.risk_score ?? ""}</td>
                       <td className="py-2 pr-4">{r.best_keyword ?? ""}</td>
-                      <td className="py-2 pr-4 text-zinc-600">
-                        {r.reason ?? ""}
-                      </td>
                     </tr>
                   ))}
                 </tbody>
