@@ -246,6 +246,13 @@ function clampProgress(p: any): number {
   return 0;
 }
 
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
 function StatusPill({ status }: { status: JobStatus }) {
   const base =
     "inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold border";
@@ -317,6 +324,8 @@ export default function AppPage() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobProgress, setJobProgress] = useState<number>(0);
   const [jobMessage, setJobMessage] = useState<string>("");
+  const [runStartMs, setRunStartMs] = useState<number | null>(null);
+  const [etaMs, setEtaMs] = useState<number | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [resp, setResp] = useState<ApiResponse | null>(null);
@@ -502,6 +511,10 @@ export default function AppPage() {
 
         if (status === "queued" || status === "running") {
           setJobStatus(status);
+          if (status === "running" && runStartMs == null) {
+            setRunStartMs(Date.now());
+            setEtaMs(null);
+          }
 
           pollAttemptsRef.current += 1;
           const interval =
@@ -519,6 +532,8 @@ export default function AppPage() {
           setJobStatus("done");
           setJobProgress(100);
           setLoading(false);
+          setRunStartMs(null);
+          setEtaMs(null);
 
           setResp({
             ok: true,
@@ -540,6 +555,8 @@ export default function AppPage() {
           setJobStatus("canceled");
           setJobProgress(100);
           setLoading(false);
+          setRunStartMs(null);
+          setEtaMs(null);
           setResp({ ok: false, error: "Canceled", detail: "Job was canceled." });
           if (!jobMessage) setJobMessage("Canceled.");
           return;
@@ -547,6 +564,8 @@ export default function AppPage() {
 
         setJobStatus("error");
         setLoading(false);
+        setRunStartMs(null);
+        setEtaMs(null);
         setResp({
           ok: false,
           error: "Job failed",
@@ -561,6 +580,8 @@ export default function AppPage() {
         if (e?.name === "AbortError") return;
         setJobStatus("error");
         setLoading(false);
+        setRunStartMs(null);
+        setEtaMs(null);
         setResp({
           ok: false,
           error: "Failed to fetch",
@@ -600,6 +621,8 @@ export default function AppPage() {
     setJobId(null);
     setJobProgress(0);
     setJobMessage("");
+    setRunStartMs(null);
+    setEtaMs(null);
     clearPoll();
 
     if (!searchFile || !keywordsFile) {
@@ -749,6 +772,27 @@ export default function AppPage() {
 
   const showProgress =
     loading && (jobStatus === "queued" || jobStatus === "running");
+
+  useEffect(() => {
+    if (jobStatus !== "running") {
+      setEtaMs(null);
+      return;
+    }
+    if (runStartMs == null) return;
+    if (jobProgress <= 0 || jobProgress >= 100) return;
+
+    const elapsedMs = Date.now() - runStartMs;
+    const pct = Math.max(1, Math.min(99, jobProgress));
+    const totalMs = elapsedMs / (pct / 100);
+    const remainingMs = Math.max(0, totalMs - elapsedMs);
+    if (!Number.isFinite(remainingMs)) return;
+
+    setEtaMs((prev) => {
+      if (prev == null) return remainingMs;
+      const alpha = 0.3;
+      return prev * (1 - alpha) + remainingMs * alpha;
+    });
+  }, [jobProgress, jobStatus, runStartMs]);
 
   // Usage display helpers
   const usedTerms = Number(usage?.usage?.used_terms ?? 0);
@@ -1119,6 +1163,11 @@ export default function AppPage() {
                         ? "Queued — preparing your audit…"
                         : "Running — this can take a couple of minutes on large exports.")}
                   </div>
+                  {jobStatus === "running" && etaMs != null ? (
+                    <div className="text-xs text-zinc-600">
+                      Estimated time remaining: ~{formatDuration(etaMs)}
+                    </div>
+                  ) : null}
                 </div>
               ) : jobStatus === "done" && resp?.ok ? (
                 <div className="mt-3 text-sm text-zinc-700">
