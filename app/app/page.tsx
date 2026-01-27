@@ -324,8 +324,8 @@ export default function AppPage() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobProgress, setJobProgress] = useState<number>(0);
   const [jobMessage, setJobMessage] = useState<string>("");
-  const [runStartMs, setRunStartMs] = useState<number | null>(null);
   const [etaMs, setEtaMs] = useState<number | null>(null);
+  const jobStartTimeRef = useRef<number | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [resp, setResp] = useState<ApiResponse | null>(null);
@@ -511,8 +511,8 @@ export default function AppPage() {
 
         if (status === "queued" || status === "running") {
           setJobStatus(status);
-          if (status === "running" && runStartMs == null) {
-            setRunStartMs(Date.now());
+          if (status === "running" && jobStartTimeRef.current == null) {
+            jobStartTimeRef.current = Date.now();
             setEtaMs(null);
           }
 
@@ -532,7 +532,6 @@ export default function AppPage() {
           setJobStatus("done");
           setJobProgress(100);
           setLoading(false);
-          setRunStartMs(null);
           setEtaMs(null);
 
           setResp({
@@ -555,7 +554,6 @@ export default function AppPage() {
           setJobStatus("canceled");
           setJobProgress(100);
           setLoading(false);
-          setRunStartMs(null);
           setEtaMs(null);
           setResp({ ok: false, error: "Canceled", detail: "Job was canceled." });
           if (!jobMessage) setJobMessage("Canceled.");
@@ -564,7 +562,6 @@ export default function AppPage() {
 
         setJobStatus("error");
         setLoading(false);
-        setRunStartMs(null);
         setEtaMs(null);
         setResp({
           ok: false,
@@ -580,7 +577,6 @@ export default function AppPage() {
         if (e?.name === "AbortError") return;
         setJobStatus("error");
         setLoading(false);
-        setRunStartMs(null);
         setEtaMs(null);
         setResp({
           ok: false,
@@ -621,8 +617,8 @@ export default function AppPage() {
     setJobId(null);
     setJobProgress(0);
     setJobMessage("");
-    setRunStartMs(null);
     setEtaMs(null);
+    jobStartTimeRef.current = null;
     clearPoll();
 
     if (!searchFile || !keywordsFile) {
@@ -778,21 +774,26 @@ export default function AppPage() {
       setEtaMs(null);
       return;
     }
-    if (runStartMs == null) return;
-    if (jobProgress <= 0 || jobProgress >= 100) return;
+    if (jobProgress < 30 || jobProgress >= 100) return;
+    const startMs = jobStartTimeRef.current;
+    if (startMs == null) return;
 
-    const elapsedMs = Date.now() - runStartMs;
-    const pct = Math.max(1, Math.min(99, jobProgress));
+    const elapsedMs = Date.now() - startMs;
+    const pct = Math.max(30, Math.min(99, jobProgress));
     const totalMs = elapsedMs / (pct / 100);
-    const remainingMs = Math.max(0, totalMs - elapsedMs);
+    let remainingMs = totalMs - elapsedMs;
     if (!Number.isFinite(remainingMs)) return;
+
+    const minMs = 1000;
+    const maxMs = 24 * 60 * 60 * 1000;
+    remainingMs = Math.min(maxMs, Math.max(minMs, remainingMs));
 
     setEtaMs((prev) => {
       if (prev == null) return remainingMs;
-      const alpha = 0.3;
+      const alpha = 0.35;
       return prev * (1 - alpha) + remainingMs * alpha;
     });
-  }, [jobProgress, jobStatus, runStartMs]);
+  }, [jobProgress, jobStatus]);
 
   // Usage display helpers
   const usedTerms = Number(usage?.usage?.used_terms ?? 0);
