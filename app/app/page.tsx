@@ -424,41 +424,11 @@ export default function AppPage() {
   }, [searchFile, minClicks, minCost]);
 
   async function startSubscription(plan: "starter" | "pro" | "scale") {
-    setBillingMsg("");
-    setBillingLoading(plan);
-
-    try {
-      const r = await fetch("/api/billing/subscribe", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ plan }),
-      });
-
-      const t = await r.text();
-      let j: any;
-      try {
-        j = JSON.parse(t);
-      } catch {
-        j = { ok: false, error: "Non-JSON response", detail: t };
-      }
-
-      if (!r.ok || j?.ok !== true) {
-        setBillingMsg(errorToText(j?.error ?? j?.detail ?? j));
-        return;
-      }
-
-      const url = j?.url;
-      if (!url || typeof url !== "string") {
-        setBillingMsg("Missing checkout URL from server.");
-        return;
-      }
-
-      window.location.href = url;
-    } catch (e: any) {
-      setBillingMsg(e?.message ?? "Failed to start checkout");
-    } finally {
-      setBillingLoading(null);
-    }
+    // Legacy subscription flow (Stripe) - unused in credits model.
+    setBillingMsg(
+      "Credit packs are coming soon. Credits never expire and are pay-as-you-go."
+    );
+    setBillingLoading(null);
   }
 
   function clearPoll() {
@@ -718,14 +688,14 @@ export default function AppPage() {
           detail: data?.detail ?? data,
         });
 
-        if (r.status === 402 && data?.error === "Quota exceeded") {
+        if (r.status === 402 && data?.error === "Insufficient credits") {
           const d = data?.detail ?? {};
-          const requested = Number(d?.requested ?? 0);
-          const remaining = Number(d?.remaining ?? 0);
-          const deficit = Math.max(0, requested - remaining);
+          const required = Number(d?.required ?? 0);
+          const available = Number(d?.available ?? 0);
+          const deficit = Math.max(0, required - available);
 
           setJobMessage(
-            `Quota exceeded. You need ${numberFmt(deficit)} more search terms to run this audit.`
+            `Insufficient credits. You need ${numberFmt(deficit)} more credits to run this audit.`
           );
           refreshUsage();
           return;
@@ -819,7 +789,7 @@ export default function AppPage() {
 
       <main className="mx-auto max-w-6xl px-6 py-10 space-y-6">
         {/* Usage widget + upgrade */}
-        <SectionCard title="Usage this period">
+        <SectionCard title="Credits usage">
           {usageLoading ? (
             <p className="text-sm text-zinc-600">Loading usage…</p>
           ) : usage?.ok === false ? (
@@ -833,68 +803,34 @@ export default function AppPage() {
             </div>
           ) : (
             <>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                <Metric label="Used" value={numberFmt(usedTerms)} />
-                <Metric label="Base quota" value={numberFmt(quotaBase)} />
-                <Metric label="Top-ups" value={numberFmt(quotaTopup)} />
-                <Metric label="Credits balance" value={numberFmt(creditsBal)} />
-                <Metric
-                  label="Remaining total"
-                  value={numberFmt(remainingTotal)}
-                />
-                <div className="sm:col-span-2 lg:col-span-5 text-xs text-zinc-600 mt-2">
-                  Period:{" "}
-                  <span className="font-medium text-zinc-900">
-                    {usage?.period?.start ?? "—"}
-                  </span>
-                  {usage?.period?.end ? (
-                    <>
-                      {" "}
-                      →{" "}
-                      <span className="font-medium text-zinc-900">
-                        {usage.period.end}
-                      </span>
-                    </>
-                  ) : null}
-                  {quotaTotal ? (
-                    <>
-                      {" "}
-                      • Quota total:{" "}
-                      <span className="font-medium text-zinc-900">
-                        {numberFmt(quotaTotal)}
-                      </span>
-                    </>
-                  ) : null}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="text-base text-zinc-900">
+                  You have <span className="font-semibold">{numberFmt(creditsBal)}</span> credits remaining.
                 </div>
+                <button
+                  onClick={refreshUsage}
+                  className="inline-flex items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
+                  disabled={usageLoading}
+                >
+                  Refresh
+                </button>
               </div>
 
-              {/* Upgrade section */}
+              {/* Buy credits section */}
               <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-5">
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <div className="text-sm font-semibold text-zinc-900">
-                      Upgrade to a paid plan
-                    </div>
-                    <div className="text-xs text-zinc-600">
-                      Keep running audits after your trial ends (or increase your
-                      monthly allowance).
-                    </div>
-                  </div>
-                  <button
-                    onClick={refreshUsage}
-                    className="mt-3 sm:mt-0 inline-flex items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
-                    disabled={usageLoading}
-                  >
-                    Refresh
-                  </button>
+                <div className="text-sm font-semibold text-zinc-900">
+                  Buy credit packs
+                </div>
+                <div className="text-xs text-zinc-600">
+                  Pay-as-you-go credits. 1 credit = 1 search term reviewed.
                 </div>
 
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-4">
                   <button
                     onClick={() => startSubscription("starter")}
                     disabled={!!billingLoading}
                     className={[
-                      "rounded-2xl border px-4 py-4 text-left transition",
+                      "rounded-2xl border px-4 py-4 text-left transition flex flex-col items-start",
                       billingLoading === "starter"
                         ? "border-zinc-200 bg-zinc-100 text-zinc-600"
                         : "border-zinc-200 bg-white hover:bg-zinc-50",
@@ -904,48 +840,66 @@ export default function AppPage() {
                       Starter
                     </div>
                     <div className="mt-1 text-xs text-zinc-600">
-                      100,000 terms / month
+                      £10
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-600">
+                      10,000 credits
                     </div>
                     <div className="mt-3 text-xs font-semibold text-zinc-900">
-                      {billingLoading === "starter"
-                        ? "Opening checkout…"
-                        : "Choose Starter →"}
+                      Buy credits →
                     </div>
                   </button>
-
                   <button
                     onClick={() => startSubscription("pro")}
                     disabled={!!billingLoading}
                     className={[
-                      "rounded-2xl border px-4 py-4 text-left transition",
+                      "rounded-2xl border px-4 py-4 text-left transition flex flex-col items-start",
                       billingLoading === "pro"
                         ? "border-zinc-200 bg-zinc-100 text-zinc-600"
-                        : "border-zinc-900 bg-white hover:bg-zinc-50",
+                        : "border-zinc-200 bg-white hover:bg-zinc-50",
                     ].join(" ")}
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="text-sm font-semibold text-zinc-900">
-                        Pro
-                      </div>
-                      <span className="rounded-full bg-zinc-900 px-2.5 py-1 text-[10px] font-semibold text-white">
-                        Most popular
-                      </span>
+                    <div className="text-sm font-semibold text-zinc-900">
+                      Growth
                     </div>
                     <div className="mt-1 text-xs text-zinc-600">
-                      300,000 terms / month
+                      £25
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-600">
+                      30,000 credits
                     </div>
                     <div className="mt-3 text-xs font-semibold text-zinc-900">
-                      {billingLoading === "pro"
-                        ? "Opening checkout…"
-                        : "Choose Pro →"}
+                      Buy credits →
                     </div>
                   </button>
-
                   <button
                     onClick={() => startSubscription("scale")}
                     disabled={!!billingLoading}
                     className={[
-                      "rounded-2xl border px-4 py-4 text-left transition",
+                      "rounded-2xl border px-4 py-4 text-left transition flex flex-col items-start",
+                      billingLoading === "scale"
+                        ? "border-zinc-200 bg-zinc-100 text-zinc-600"
+                        : "border-zinc-200 bg-white hover:bg-zinc-50",
+                    ].join(" ")}
+                  >
+                    <div className="text-sm font-semibold text-zinc-900">
+                      Pro
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-600">
+                      £50
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-600">
+                      75,000 credits
+                    </div>
+                    <div className="mt-3 text-xs font-semibold text-zinc-900">
+                      Buy credits →
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => startSubscription("scale")}
+                    disabled={!!billingLoading}
+                    className={[
+                      "rounded-2xl border px-4 py-4 text-left transition flex flex-col items-start",
                       billingLoading === "scale"
                         ? "border-zinc-200 bg-zinc-100 text-zinc-600"
                         : "border-zinc-200 bg-white hover:bg-zinc-50",
@@ -955,12 +909,13 @@ export default function AppPage() {
                       Scale
                     </div>
                     <div className="mt-1 text-xs text-zinc-600">
-                      500,000 terms / month
+                      £100
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-600">
+                      175,000 credits
                     </div>
                     <div className="mt-3 text-xs font-semibold text-zinc-900">
-                      {billingLoading === "scale"
-                        ? "Opening checkout…"
-                        : "Choose Scale →"}
+                      Buy credits →
                     </div>
                   </button>
                 </div>
@@ -972,8 +927,7 @@ export default function AppPage() {
                 ) : null}
 
                 <div className="mt-4 text-xs text-zinc-500">
-                  Trial: 7 days • Cap: 20,000 search terms • You can upgrade
-                  anytime.
+                  Credits never expire • No subscriptions • Buy more anytime.
                 </div>
               </div>
             </>

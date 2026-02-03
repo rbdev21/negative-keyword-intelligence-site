@@ -93,7 +93,7 @@ function PricingTier({
         </li>
         <li className="flex gap-2">
           <span className="mt-[2px] inline-block h-2 w-2 rounded-full bg-zinc-900" />
-          Scheduled scans (weekly / monthly)
+          On-demand audits with credit packs
         </li>
         <li className="flex gap-2">
           <span className="mt-[2px] inline-block h-2 w-2 rounded-full bg-zinc-900" />
@@ -189,7 +189,7 @@ export default function HomePage() {
               </div>
 
               <p className="mt-3 text-sm text-zinc-500">
-                Free trial includes{" "}
+                Free credits include{" "}
                 <span className="font-medium text-zinc-900">1,000 credits</span>{" "}
                 (1 credit = 1 search term reviewed).
               </p>
@@ -229,7 +229,7 @@ export default function HomePage() {
                   </p>
                   <p className="mt-1 text-sm text-zinc-600">
                     Export-ready list + estimated savings. Schedule
-                    weekly/monthly.
+                    on demand.
                   </p>
                 </div>
               </div>
@@ -286,7 +286,7 @@ export default function HomePage() {
             />
             <Card
               title="Export + schedule"
-              desc="Download export-ready negatives and schedule weekly/monthly scans."
+              desc="Download export-ready negatives and schedule audits on demand."
             />
           </div>
         </section>
@@ -322,7 +322,7 @@ export default function HomePage() {
           </div>
 
           <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6 text-sm text-zinc-600 shadow-sm">
-            <p className="font-semibold text-zinc-900">Free trial</p>
+            <p className="font-semibold text-zinc-900">Free credits</p>
             <p className="mt-1">
               Get{" "}
               <span className="font-medium text-zinc-900">1,000 free credits</span>{" "}

@@ -7,6 +7,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Don't force apiVersion (avoids type unions causing build issues)
+// Legacy subscription webhooks (Stripe). Credits model uses one-time top-ups.
+// Keep for reference; remove before launch.
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 function admin() {
@@ -25,7 +27,7 @@ function planFromPrice(priceId: string | null) {
 }
 
 function baseQuotaFor(status: string | null, plan: string | null) {
-  // Trial cap = 20,000 terms
+  // Legacy trial cap = 20,000 credits
   if (status === "trialing") return 20000;
 
   if (plan === "starter") return 100000;
@@ -75,7 +77,7 @@ async function upsertUsageWindow(
 }
 
 async function resolveUserId(sub: any, customerId: string) {
-  // Prefer subscription metadata
+  // Legacy subscription metadata
   const subUserId = (sub?.metadata?.supabase_user_id as string) || null;
   if (subUserId) return subUserId;
 
@@ -88,6 +90,7 @@ async function resolveUserId(sub: any, customerId: string) {
   return null;
 }
 
+// Legacy subscription handler (credits model uses top-ups)
 async function handleSubscription(sb: ReturnType<typeof admin>, subRaw: any) {
   const customerId =
     typeof subRaw.customer === "string" ? subRaw.customer : subRaw.customer?.id;

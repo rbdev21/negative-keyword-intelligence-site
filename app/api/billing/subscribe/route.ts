@@ -6,6 +6,8 @@ import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Legacy subscription checkout (Stripe). Credits model uses one-time top-ups.
+// Keep for reference; remove before launch.
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 
 function admin() {
@@ -24,7 +26,7 @@ function getPriceId(plan: string) {
   if (p === "starter") return process.env.STRIPE_PRICE_STARTER!;
   if (p === "pro") return process.env.STRIPE_PRICE_PRO!;
   if (p === "scale") return process.env.STRIPE_PRICE_SCALE!;
-  throw new Error("Unknown plan. Use starter|pro|scale");
+  throw new Error("Unknown pack. Use starter|pro|scale");
 }
 
 export async function POST(req: Request) {
@@ -43,7 +45,11 @@ export async function POST(req: Request) {
     const plan = String(body?.plan ?? "").toLowerCase();
     if (!plan || !["starter", "pro", "scale"].includes(plan)) {
       return NextResponse.json(
-        { ok: false, error: "Bad Request", detail: "plan must be starter|pro|scale" },
+        {
+          ok: false,
+          error: "Bad Request",
+          detail: "pack must be starter|pro|scale",
+        },
         { status: 400 }
       );
     }
@@ -87,7 +93,7 @@ export async function POST(req: Request) {
       );
     }
 
-    // 7-day trial
+    // Legacy 7-day trial (subscription flow)
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
       customer: customerId,

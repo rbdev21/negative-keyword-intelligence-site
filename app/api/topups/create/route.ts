@@ -28,7 +28,7 @@ export async function POST(req: Request) {
         ok: false,
         error: "Top-ups not enabled yet",
         detail: {
-          message: "Top-up checkout is not wired to Stripe yet.",
+          message: "Top-up checkout is not enabled yet.",
           requested: body ?? null,
         },
       },

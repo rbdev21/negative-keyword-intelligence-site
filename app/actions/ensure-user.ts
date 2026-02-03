@@ -2,8 +2,9 @@
 
 import { createClient } from "@/lib/supabase/server";
 
-const FREE_TRIAL_TERMS = 20000;
+const FREE_CREDITS = 20000;
 
+// Legacy name: still provisions free credits on signup.
 export async function ensureUserAndTrial() {
   const supabase = await createClient();
 
@@ -23,7 +24,7 @@ export async function ensureUserAndTrial() {
       {
         id: user.id, // IMPORTANT: use auth user id as primary key
         email: user.email,
-        plan: "trial",
+        plan: "trial", // legacy field
       },
       { onConflict: "id" }
     );
@@ -38,20 +39,20 @@ export async function ensureUserAndTrial() {
   if (!usageRow) {
     await supabase.from("usage").insert({
       user_id: user.id,
-      remaining_terms: FREE_TRIAL_TERMS,
-      plan: "trial",
+      remaining_terms: FREE_CREDITS,
+      plan: "trial", // legacy field
     });
 
     // Optional: record an event
     await supabase.from("usage_events").insert({
       user_id: user.id,
-      event_type: "trial_granted",
-      amount_terms: FREE_TRIAL_TERMS,
+      event_type: "credits_granted",
+      amount_terms: FREE_CREDITS,
       meta: { source: "signup" },
     });
   }
 
-  // 3) Ensure monthly tracking row exists
+  // 3) Ensure reporting window row exists (legacy monthly tracking)
   const now = new Date();
   const monthKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
 

@@ -41,7 +41,7 @@ export default function SignupPage() {
       return;
     }
 
-    // 3) Send them straight into the app trial
+    // 3) Send them straight into the app with free credits
     router.push("/app");
   }
 
@@ -49,7 +49,7 @@ export default function SignupPage() {
     <main className="mx-auto max-w-md px-6 py-16">
       <h1 className="text-3xl font-semibold">Create your account</h1>
       <p className="mt-2 text-sm text-neutral-500">
-        Start your 7-day free trial (20,000 search terms).
+        Start with 20,000 free credits (1 credit = 1 search term reviewed).
       </p>
 
       <form onSubmit={onSubmit} className="mt-8 space-y-4">

@@ -51,7 +51,7 @@ export async function GET(_req: Request) {
       .limit(1)
       .maybeSingle();
 
-    // If no row yet, return a friendly default (you can set base_quota later via subscription plumbing)
+    // If no row yet, return a friendly default (legacy subscription fields may be zero)
     const monthStart = usageRow?.month_start ?? null;
     const used = Number(usageRow?.terms_used ?? 0);
     const baseQuota = Number(usageRow?.base_quota ?? usageRow?.terms_quota ?? 0);
@@ -71,7 +71,7 @@ export async function GET(_req: Request) {
     const remainingQuota = Math.max(0, quotaTotal - used);
     const remainingTotal = remainingQuota + Math.max(0, creditsBalance);
 
-    // 5) Period end (for now assume +1 month from month_start; later this will be billing-anchor based)
+    // 5) Reporting window end (legacy monthly tracking)
     const periodStart = monthStart;
     const periodEnd = periodStart ? addOneMonth(periodStart) : null;
 
