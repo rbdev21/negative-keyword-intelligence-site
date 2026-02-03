@@ -30,13 +30,15 @@ function Card({ title, desc }: { title: string; desc: string }) {
 function PricingTier({
   name,
   price,
-  allowance,
+  credits,
   highlight,
+  footnote,
 }: {
   name: string;
   price: string;
-  allowance: string;
+  credits: string;
   highlight?: boolean;
+  footnote?: string;
 }) {
   return (
     <div
@@ -61,13 +63,19 @@ function PricingTier({
           <span className="text-4xl font-semibold tracking-tight text-zinc-900">
             {price}
           </span>
-          <span className="pb-1 text-sm text-zinc-500">/ month</span>
+          <span className="pb-1 text-sm text-zinc-500">one-time</span>
         </div>
         <p className="mt-2 text-sm text-zinc-600">
           Includes{" "}
-          <span className="font-medium text-zinc-900">{allowance}</span>{" "}
-          search terms reviewed.
+          <span className="font-medium text-zinc-900">{credits}</span>{" "}
+          credits.
         </p>
+        <p className="mt-1 text-xs text-zinc-500">
+          1 credit = 1 search term reviewed. Credits never expire.
+        </p>
+        {footnote ? (
+          <p className="mt-2 text-xs text-zinc-500">{footnote}</p>
+        ) : null}
       </div>
 
       <ul className="mt-6 space-y-3 text-sm text-zinc-700">
@@ -106,7 +114,7 @@ function PricingTier({
           Try for free
         </Link>
         <p className="mt-2 text-center text-xs text-zinc-500">
-          Top-ups available if you need more search terms.
+          Start with 1,000 free credits, then top up anytime.
         </p>
       </div>
     </div>
@@ -161,7 +169,8 @@ export default function HomePage() {
               <p className="mt-5 text-lg leading-relaxed text-zinc-600">
                 TermTidy connects to your Google Ads account, audits search
                 terms, and recommends precise negative keywords to cut wasted
-                spend — without harming good traffic.
+                spend — without harming good traffic. Pay only for filtered,
+                billable terms.
               </p>
 
               <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -180,11 +189,9 @@ export default function HomePage() {
               </div>
 
               <p className="mt-3 text-sm text-zinc-500">
-                7-day free trial includes{" "}
-                <span className="font-medium text-zinc-900">
-                  20,000 search terms
-                </span>{" "}
-                reviewed.
+                Free trial includes{" "}
+                <span className="font-medium text-zinc-900">1,000 credits</span>{" "}
+                (1 credit = 1 search term reviewed).
               </p>
             </div>
 
@@ -262,7 +269,8 @@ export default function HomePage() {
               <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-600">
                 TermTidy compares your search terms to your keyword targets,
                 detects mismatched intent, and recommends safe exact-match
-                negatives — with brand protection built in.
+                negatives — with brand protection built in. Only filtered,
+                billable terms use credits.
               </p>
             </div>
           </div>
@@ -289,8 +297,7 @@ export default function HomePage() {
             <div>
               <h2 className="text-2xl font-semibold tracking-tight">Pricing</h2>
               <p className="mt-2 text-sm text-zinc-600">
-                Plans are based on the number of search terms reviewed per month.
-                Need more? Add a top-up anytime.
+                Buy credits when you need them. Credits never expire.
               </p>
             </div>
             <Link
@@ -301,28 +308,29 @@ export default function HomePage() {
             </Link>
           </div>
 
-          <div className="mt-8 grid gap-4 lg:grid-cols-3">
-            <PricingTier name="Starter" price="£10" allowance="100,000" />
+          <div className="mt-8 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <PricingTier name="Starter Pack" price="£10" credits="10,000" />
             <PricingTier
-              name="Pro"
-              price="£20"
-              allowance="300,000"
+              name="Growth Pack"
+              price="£25"
+              credits="30,000"
               highlight
+              footnote="Great for most accounts and agencies running regular audits."
             />
-            <PricingTier name="Scale" price="£30" allowance="500,000" />
+            <PricingTier name="Pro Pack" price="£50" credits="75,000" />
+            <PricingTier name="Scale Pack" price="£100" credits="175,000" />
           </div>
 
           <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6 text-sm text-zinc-600 shadow-sm">
             <p className="font-semibold text-zinc-900">Free trial</p>
             <p className="mt-1">
-              7-day free trial includes{" "}
-              <span className="font-medium text-zinc-900">20,000</span> search
-              terms reviewed. Cancel anytime.
+              Get{" "}
+              <span className="font-medium text-zinc-900">1,000 free credits</span>{" "}
+              to run your first audit.
             </p>
             <p className="mt-3">
-              <span className="font-medium text-zinc-900">Top-ups:</span> If you
-              exceed your allowance, you’ll be able to buy additional search
-              term credits inside the app.
+              <span className="font-medium text-zinc-900">Top-ups:</span> When
+              you’re ready, buy a credit pack — credits never expire.
             </p>
           </div>
         </section>
