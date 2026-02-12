@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const USER_USAGE_TABLE = process.env.TERMTIDY_USAGE_TABLE || "user_usage_monthly";
-const CREDITS_TABLE = process.env.TERMTIDY_CREDITS_TABLE || "term_credits";
+const CREDITS_TABLE = process.env.TERMTIDY_CREDITS_TABLE || "credits_balance";
 
 function admin() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -66,10 +66,11 @@ export async function GET(_req: Request) {
       .maybeSingle();
 
     const creditsBalance = Number(creditsRow?.balance ?? 0);
+    console.log("[usage] user", user.id, "credits_balance", creditsBalance);
 
     // 4) Compute remaining
     const remainingQuota = Math.max(0, quotaTotal - used);
-    const remainingTotal = remainingQuota + Math.max(0, creditsBalance);
+    const remainingTotal = Math.max(0, creditsBalance);
 
     // 5) Reporting window end (legacy monthly tracking)
     const periodStart = monthStart;
