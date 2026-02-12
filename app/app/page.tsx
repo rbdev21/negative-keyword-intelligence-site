@@ -795,13 +795,8 @@ export default function AppPage() {
     });
   }, [jobProgress, jobStatus]);
 
-  // Usage display helpers
-  const usedTerms = Number(usage?.usage?.used_terms ?? 0);
-  const quotaBase = Number(usage?.quota?.base ?? 0);
-  const quotaTopup = Number(usage?.quota?.topup ?? 0);
-  const quotaTotal = Number(usage?.quota?.total ?? (quotaBase + quotaTopup));
+  // Credits display helpers
   const creditsBal = Number(usage?.credits?.balance ?? 0);
-  const remainingTotal = Number(usage?.remaining_total ?? 0);
 
   const disableRun = loading || uploading;
 
@@ -835,7 +830,11 @@ export default function AppPage() {
             <>
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div className="text-base text-zinc-900">
-                  You have <span className="font-semibold">{numberFmt(creditsBal)}</span> credits remaining.
+                  You have{" "}
+                  <span className="font-semibold">
+                    {numberFmt(creditsBal)}
+                  </span>{" "}
+                  credits remaining.
                 </div>
                 <button
                   onClick={refreshUsage}
