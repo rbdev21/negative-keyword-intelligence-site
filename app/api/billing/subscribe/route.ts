@@ -41,6 +41,7 @@ export async function POST(req: Request) {
     if (userErr || !user) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
+    const userId = user.id;
 
     return NextResponse.json(
       {
@@ -71,7 +72,7 @@ export async function POST(req: Request) {
     const { data: subRow } = await supabaseAdmin
       .from("subscriptions")
       .select("stripe_customer_id")
-      .eq("user_id", user.id)
+      .eq("user_id", userId)
       .maybeSingle();
 
     let customerId = subRow?.stripe_customer_id as string | null;
@@ -79,7 +80,7 @@ export async function POST(req: Request) {
     if (!customerId) {
       const customer = await stripe.customers.create({
         email: user.email ?? undefined,
-        metadata: { supabase_user_id: user.id },
+        metadata: { supabase_user_id: userId },
       });
       customerId = customer.id;
 
@@ -87,7 +88,7 @@ export async function POST(req: Request) {
         .from("subscriptions")
         .upsert(
           {
-            user_id: user.id,
+            user_id: userId,
             stripe_customer_id: customerId,
             updated_at: new Date().toISOString(),
           },
@@ -114,12 +115,12 @@ export async function POST(req: Request) {
       subscription_data: {
         trial_period_days: 7,
         metadata: {
-          supabase_user_id: user.id,
+          supabase_user_id: userId,
           plan,
         },
       },
       metadata: {
-        supabase_user_id: user.id,
+        supabase_user_id: userId,
         plan,
       },
     });
