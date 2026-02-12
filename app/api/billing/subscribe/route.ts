@@ -108,7 +108,7 @@ export async function POST(req: Request) {
     // Legacy 7-day trial (subscription flow)
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
-      customer: customerId,
+      customer: customerId ?? undefined,
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${appUrl}/app?billing=success`,
       cancel_url: `${appUrl}/app?billing=canceled`,
