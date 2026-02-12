@@ -796,7 +796,7 @@ export default function AppPage() {
   }, [jobProgress, jobStatus]);
 
   // Credits display helpers
-  const creditsBal = Number(usage?.credits?.balance ?? 0);
+  const creditsRemaining = Math.max(0, Number(usage?.credits?.balance ?? 0));
 
   const disableRun = loading || uploading;
 
@@ -832,7 +832,7 @@ export default function AppPage() {
                 <div className="text-base text-zinc-900">
                   You have{" "}
                   <span className="font-semibold">
-                    {numberFmt(creditsBal)}
+                    {numberFmt(creditsRemaining)}
                   </span>{" "}
                   credits remaining.
                 </div>
