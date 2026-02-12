@@ -1,3 +1,4 @@
+// TODO: Remove legacy subscription webhooks before public launch.
 import Stripe from "stripe";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
@@ -155,26 +156,21 @@ export async function POST(req: Request) {
 
     switch (event.type) {
       case "checkout.session.completed": {
-        const session = event.data.object as Stripe.Checkout.Session;
-
-        if (session.subscription) {
-          const subId = String(session.subscription);
-          const sub = await stripe.subscriptions.retrieve(subId);
-          await handleSubscription(sb, sub as any);
-        }
+        console.log("[stripe webhook] ignored subscription checkout session", event.id);
         break;
       }
 
       case "customer.subscription.created":
       case "customer.subscription.updated":
       case "customer.subscription.deleted": {
-        const sub = event.data.object as any;
-        await handleSubscription(sb, sub);
+        console.log("[stripe webhook] ignored subscription event", event.type, event.id);
         break;
       }
 
-      default:
+      default: {
+        console.log("[stripe webhook] ignored event", event.type, event.id);
         break;
+      }
     }
 
     return NextResponse.json({ ok: true });

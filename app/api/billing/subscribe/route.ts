@@ -1,3 +1,4 @@
+// TODO: Remove legacy subscription checkout before public launch.
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { createClient } from "@/lib/supabase/server";
@@ -31,6 +32,15 @@ function getPriceId(plan: string) {
 
 export async function POST(req: Request) {
   try {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Subscriptions disabled",
+        detail: "Credits-only billing is active",
+      },
+      { status: 410 }
+    );
+
     const supabase = await createClient();
     const {
       data: { user },
