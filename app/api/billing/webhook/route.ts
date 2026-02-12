@@ -92,9 +92,9 @@ export async function POST(req: Request) {
     const amountGbp =
       typeof session.amount_total === "number" ? session.amount_total / 100 : null;
 
-    const { data: rpcData, error: rpcErr } = await sb.rpc("apply_credits", {
+    const payload = {
       p_user_id: userId,
-      p_change: credits,
+      p_amount: credits,
       p_reason: "stripe_topup",
       p_job_id: null,
       p_meta: {
@@ -102,7 +102,10 @@ export async function POST(req: Request) {
         pack,
         amount_gbp: amountGbp,
       },
-    });
+    };
+    console.log("[billing webhook] apply_credits payload keys", Object.keys(payload));
+
+    const { data: rpcData, error: rpcErr } = await sb.rpc("apply_credits", payload);
 
     if (rpcErr) {
       console.error("[billing webhook] apply_credits failed", rpcErr);
