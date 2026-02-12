@@ -41,7 +41,8 @@ export async function POST(req: Request) {
     if (userErr || !user) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
-    const userId = user.id;
+    const { id: userId, email: userEmailRaw } = user;
+    const userEmail = userEmailRaw ?? undefined;
 
     return NextResponse.json(
       {
@@ -79,7 +80,7 @@ export async function POST(req: Request) {
 
     if (!customerId) {
       const customer = await stripe.customers.create({
-        email: user.email ?? undefined,
+        email: userEmail,
         metadata: { supabase_user_id: userId },
       });
       customerId = customer.id;
