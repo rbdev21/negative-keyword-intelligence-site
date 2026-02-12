@@ -32,15 +32,6 @@ function getPriceId(plan: string) {
 
 export async function POST(req: Request) {
   try {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "Subscriptions disabled",
-        detail: "Credits-only billing is active",
-      },
-      { status: 410 }
-    );
-
     const supabase = await createClient();
     const {
       data: { user },
@@ -50,6 +41,15 @@ export async function POST(req: Request) {
     if (userErr || !user) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Subscriptions disabled",
+        detail: "Credits-only billing is active",
+      },
+      { status: 410 }
+    );
 
     const body = await req.json().catch(() => ({}));
     const plan = String(body?.plan ?? "").toLowerCase();
