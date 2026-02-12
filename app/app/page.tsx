@@ -312,7 +312,7 @@ export default function AppPage() {
 
   // Billing UI state
   const [billingLoading, setBillingLoading] = useState<
-    null | "starter" | "pro" | "scale"
+    null | "starter" | "growth" | "scale" | "agency"
   >(null);
   const [billingMsg, setBillingMsg] = useState<string>("");
 
@@ -423,12 +423,42 @@ export default function AppPage() {
     };
   }, [searchFile, minClicks, minCost]);
 
-  async function startSubscription(plan: "starter" | "pro" | "scale") {
-    // Legacy subscription flow (Stripe) - unused in credits model.
-    setBillingMsg(
-      "Credit packs are coming soon. Credits never expire and are pay-as-you-go."
-    );
-    setBillingLoading(null);
+  async function startCheckout(pack: "starter" | "growth" | "scale" | "agency") {
+    setBillingMsg("");
+    setBillingLoading(pack);
+
+    try {
+      const r = await fetch("/api/billing/checkout", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ pack }),
+      });
+
+      const t = await r.text();
+      let j: any;
+      try {
+        j = JSON.parse(t);
+      } catch {
+        j = { ok: false, error: "Non-JSON response", detail: t };
+      }
+
+      if (!r.ok || j?.ok !== true) {
+        setBillingMsg(errorToText(j?.error ?? j?.detail ?? j));
+        return;
+      }
+
+      const url = j?.url;
+      if (!url || typeof url !== "string") {
+        setBillingMsg("Missing checkout URL from server.");
+        return;
+      }
+
+      window.location.href = url;
+    } catch (e: any) {
+      setBillingMsg(e?.message ?? "Failed to start checkout");
+    } finally {
+      setBillingLoading(null);
+    }
   }
 
   function clearPoll() {
@@ -827,7 +857,7 @@ export default function AppPage() {
 
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 md:grid-cols-4">
                   <button
-                    onClick={() => startSubscription("starter")}
+                    onClick={() => startCheckout("starter")}
                     disabled={!!billingLoading}
                     className={[
                       "rounded-2xl border px-4 py-4 text-left transition flex flex-col items-start",
@@ -846,15 +876,17 @@ export default function AppPage() {
                       10,000 credits
                     </div>
                     <div className="mt-3 text-xs font-semibold text-zinc-900">
-                      Buy credits →
+                      {billingLoading === "starter"
+                        ? "Opening checkout…"
+                        : "Buy credits →"}
                     </div>
                   </button>
                   <button
-                    onClick={() => startSubscription("pro")}
+                    onClick={() => startCheckout("growth")}
                     disabled={!!billingLoading}
                     className={[
                       "rounded-2xl border px-4 py-4 text-left transition flex flex-col items-start",
-                      billingLoading === "pro"
+                      billingLoading === "growth"
                         ? "border-zinc-200 bg-zinc-100 text-zinc-600"
                         : "border-zinc-200 bg-white hover:bg-zinc-50",
                     ].join(" ")}
@@ -869,34 +901,13 @@ export default function AppPage() {
                       30,000 credits
                     </div>
                     <div className="mt-3 text-xs font-semibold text-zinc-900">
-                      Buy credits →
+                      {billingLoading === "growth"
+                        ? "Opening checkout…"
+                        : "Buy credits →"}
                     </div>
                   </button>
                   <button
-                    onClick={() => startSubscription("scale")}
-                    disabled={!!billingLoading}
-                    className={[
-                      "rounded-2xl border px-4 py-4 text-left transition flex flex-col items-start",
-                      billingLoading === "scale"
-                        ? "border-zinc-200 bg-zinc-100 text-zinc-600"
-                        : "border-zinc-200 bg-white hover:bg-zinc-50",
-                    ].join(" ")}
-                  >
-                    <div className="text-sm font-semibold text-zinc-900">
-                      Pro
-                    </div>
-                    <div className="mt-1 text-xs text-zinc-600">
-                      £50
-                    </div>
-                    <div className="mt-1 text-xs text-zinc-600">
-                      75,000 credits
-                    </div>
-                    <div className="mt-3 text-xs font-semibold text-zinc-900">
-                      Buy credits →
-                    </div>
-                  </button>
-                  <button
-                    onClick={() => startSubscription("scale")}
+                    onClick={() => startCheckout("scale")}
                     disabled={!!billingLoading}
                     className={[
                       "rounded-2xl border px-4 py-4 text-left transition flex flex-col items-start",
@@ -909,13 +920,40 @@ export default function AppPage() {
                       Scale
                     </div>
                     <div className="mt-1 text-xs text-zinc-600">
+                      £50
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-600">
+                      75,000 credits
+                    </div>
+                    <div className="mt-3 text-xs font-semibold text-zinc-900">
+                      {billingLoading === "scale"
+                        ? "Opening checkout…"
+                        : "Buy credits →"}
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => startCheckout("agency")}
+                    disabled={!!billingLoading}
+                    className={[
+                      "rounded-2xl border px-4 py-4 text-left transition flex flex-col items-start",
+                      billingLoading === "agency"
+                        ? "border-zinc-200 bg-zinc-100 text-zinc-600"
+                        : "border-zinc-200 bg-white hover:bg-zinc-50",
+                    ].join(" ")}
+                  >
+                    <div className="text-sm font-semibold text-zinc-900">
+                      Agency
+                    </div>
+                    <div className="mt-1 text-xs text-zinc-600">
                       £100
                     </div>
                     <div className="mt-1 text-xs text-zinc-600">
                       175,000 credits
                     </div>
                     <div className="mt-3 text-xs font-semibold text-zinc-900">
-                      Buy credits →
+                      {billingLoading === "agency"
+                        ? "Opening checkout…"
+                        : "Buy credits →"}
                     </div>
                   </button>
                 </div>
