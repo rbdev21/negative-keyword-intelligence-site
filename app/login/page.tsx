@@ -3,6 +3,9 @@
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 
 export default function LoginPage() {
   const supabase = createClient();
@@ -28,36 +31,44 @@ export default function LoginPage() {
 
   return (
     <main className="mx-auto max-w-md px-6 py-16">
-      <h1 className="text-3xl font-semibold">Log in</h1>
-      <p className="mt-2 text-sm text-neutral-500">Welcome back.</p>
+      <Card>
+        <CardHeader>
+          <CardTitle>Log in</CardTitle>
+          <CardDescription>Access your TermTidy workspace.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={onSubmit} className="space-y-4">
+            <div>
+              <label className="text-xs font-medium text-slate-700">Email</label>
+              <Input
+                className="mt-1"
+                placeholder="you@company.com"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-700">Password</label>
+              <Input
+                className="mt-1"
+                placeholder="••••••••"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
 
-      <form onSubmit={onSubmit} className="mt-8 space-y-4">
-        <input
-          className="w-full rounded-lg border px-4 py-3"
-          placeholder="Email"
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-        />
-        <input
-          className="w-full rounded-lg border px-4 py-3"
-          placeholder="Password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
+            <Button className="w-full" disabled={loading}>
+              {loading ? "Logging in..." : "Log in"}
+            </Button>
 
-        <button
-          className="w-full rounded-lg bg-black px-4 py-3 text-white disabled:opacity-60"
-          disabled={loading}
-        >
-          {loading ? "Logging in..." : "Log in"}
-        </button>
-
-        {msg && <p className="text-sm text-neutral-700">{msg}</p>}
-      </form>
+            {msg && <p className="text-sm text-slate-700">{msg}</p>}
+          </form>
+        </CardContent>
+      </Card>
     </main>
   );
 }

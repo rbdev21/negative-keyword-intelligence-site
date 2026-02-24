@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import UsagePanel from "@/components/UsagePanel";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default async function AccountPage() {
   const supabase = await createClient();
@@ -12,14 +14,17 @@ export default async function AccountPage() {
   if (!user) redirect("/login");
 
   return (
-    <div className="min-h-screen bg-zinc-50 text-zinc-900">
+    <div className="min-h-screen bg-slate-50 text-slate-900">
       <div className="mx-auto max-w-4xl px-6 py-10">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold tracking-tight">Account</h1>
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Account</h1>
+            <p className="mt-1 text-sm text-slate-600">
+              Manage your profile and credits.
+            </p>
+          </div>
           <form action="/auth/signout" method="post">
-            <button className="rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold hover:bg-zinc-50">
-              Sign out
-            </button>
+            <Button variant="secondary">Sign out</Button>
           </form>
         </div>
 
@@ -27,11 +32,17 @@ export default async function AccountPage() {
           <UsagePanel />
         </div>
 
-        <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-          <p className="text-sm font-semibold text-zinc-900">User</p>
-          <pre className="mt-3 overflow-auto rounded-xl bg-zinc-50 p-4 text-xs text-zinc-800">
-            {JSON.stringify(user, null, 2)}
-          </pre>
+        <div className="mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>User profile</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <pre className="overflow-auto rounded-md bg-slate-50 p-4 text-xs text-slate-800">
+                {JSON.stringify(user, null, 2)}
+              </pre>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>

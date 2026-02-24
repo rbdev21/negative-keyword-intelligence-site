@@ -74,25 +74,32 @@ function LogoMark() {
 function SectionCard({
   title,
   children,
+  subtitle,
 }: {
   title: string;
+  subtitle?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-base font-semibold text-zinc-900">{title}</h2>
+    <div className="rounded-lg border border-slate-200 bg-white">
+      <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
+        <div>
+          <h2 className="text-base font-semibold text-slate-900">{title}</h2>
+          {subtitle ? (
+            <p className="mt-1 text-sm text-slate-600">{subtitle}</p>
+          ) : null}
+        </div>
       </div>
-      <div className="mt-4">{children}</div>
+      <div className="px-5 py-4">{children}</div>
     </div>
   );
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
-      <div className="text-xs font-medium text-zinc-600">{label}</div>
-      <div className="mt-1 text-lg font-semibold text-zinc-900">{value}</div>
+    <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
+      <div className="text-xs font-medium text-slate-600">{label}</div>
+      <div className="mt-1 text-lg font-semibold text-slate-900">{value}</div>
     </div>
   );
 }
@@ -255,14 +262,14 @@ function formatDuration(ms: number): string {
 
 function StatusPill({ status }: { status: JobStatus }) {
   const base =
-    "inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold border";
+    "inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold border";
   const styles: Record<JobStatus, string> = {
-    idle: "border-zinc-200 bg-white text-zinc-700",
+    idle: "border-slate-200 bg-white text-slate-700",
     queued: "border-amber-200 bg-amber-50 text-amber-800",
     running: "border-blue-200 bg-blue-50 text-blue-800",
     done: "border-emerald-200 bg-emerald-50 text-emerald-800",
     error: "border-red-200 bg-red-50 text-red-800",
-    canceled: "border-zinc-200 bg-zinc-50 text-zinc-700",
+    canceled: "border-slate-200 bg-slate-50 text-slate-700",
   };
 
   const label: Record<JobStatus, string> = {
@@ -280,13 +287,13 @@ function StatusPill({ status }: { status: JobStatus }) {
 function ProgressBar({ value }: { value: number }) {
   return (
     <div className="w-full">
-      <div className="h-2 w-full rounded-full bg-zinc-200 overflow-hidden">
+      <div className="h-2 w-full rounded-full bg-slate-100">
         <div
-          className="h-2 rounded-full bg-zinc-900 transition-all"
+          className="h-2 rounded-full bg-blue-600 transition-all"
           style={{ width: `${Math.max(0, Math.min(100, value))}%` }}
         />
       </div>
-      <div className="mt-1 text-xs text-zinc-600">{value}%</div>
+      <div className="mt-1 text-xs text-slate-600">{value}%</div>
     </div>
   );
 }
@@ -801,18 +808,17 @@ export default function AppPage() {
   const disableRun = loading || uploading;
 
   return (
-    <div className="min-h-screen bg-zinc-50 text-zinc-900">
-      <header className="sticky top-0 z-40 border-b border-zinc-200 bg-zinc-50/80 backdrop-blur">
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <LogoMark />
-          <div className="text-sm text-zinc-600">
-            Using proxy routes:{" "}
-            <span className="font-medium text-zinc-900">/api/jobs</span>
+          <div className="text-xs text-slate-500">
+            API proxy: <span className="font-medium text-slate-700">/api/jobs</span>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-6xl px-6 py-10 space-y-6">
+      <main className="mx-auto max-w-6xl px-6 py-8 space-y-6">
         {/* Usage widget + upgrade */}
         <SectionCard title="Credits usage">
           {usageLoading ? (
@@ -846,7 +852,7 @@ export default function AppPage() {
               </div>
 
               {/* Buy credits section */}
-              <div className="mt-6 rounded-2xl border border-zinc-200 bg-white p-5">
+              <div className="mt-6 rounded-lg border border-slate-200 bg-white p-5">
                 <div className="text-sm font-semibold text-zinc-900">
                   Buy credit packs
                 </div>
@@ -859,7 +865,7 @@ export default function AppPage() {
                     onClick={() => startCheckout("starter")}
                     disabled={!!billingLoading}
                     className={[
-                      "rounded-2xl border px-4 py-4 text-left transition flex flex-col items-start",
+                      "rounded-lg border px-4 py-4 text-left transition flex flex-col items-start",
                       billingLoading === "starter"
                         ? "border-zinc-200 bg-zinc-100 text-zinc-600"
                         : "border-zinc-200 bg-white hover:bg-zinc-50",
@@ -884,7 +890,7 @@ export default function AppPage() {
                     onClick={() => startCheckout("growth")}
                     disabled={!!billingLoading}
                     className={[
-                      "rounded-2xl border px-4 py-4 text-left transition flex flex-col items-start",
+                      "rounded-lg border px-4 py-4 text-left transition flex flex-col items-start",
                       billingLoading === "growth"
                         ? "border-zinc-200 bg-zinc-100 text-zinc-600"
                         : "border-zinc-200 bg-white hover:bg-zinc-50",
@@ -909,7 +915,7 @@ export default function AppPage() {
                     onClick={() => startCheckout("scale")}
                     disabled={!!billingLoading}
                     className={[
-                      "rounded-2xl border px-4 py-4 text-left transition flex flex-col items-start",
+                      "rounded-lg border px-4 py-4 text-left transition flex flex-col items-start",
                       billingLoading === "scale"
                         ? "border-zinc-200 bg-zinc-100 text-zinc-600"
                         : "border-zinc-200 bg-white hover:bg-zinc-50",
@@ -934,7 +940,7 @@ export default function AppPage() {
                     onClick={() => startCheckout("agency")}
                     disabled={!!billingLoading}
                     className={[
-                      "rounded-2xl border px-4 py-4 text-left transition flex flex-col items-start",
+                      "rounded-lg border px-4 py-4 text-left transition flex flex-col items-start",
                       billingLoading === "agency"
                         ? "border-zinc-200 bg-zinc-100 text-zinc-600"
                         : "border-zinc-200 bg-white hover:bg-zinc-50",
@@ -1030,7 +1036,7 @@ export default function AppPage() {
                     value={minClicks}
                     onChange={(e) => setMinClicks(Number(e.target.value))}
                     type="number"
-                    className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
+                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                   />
                 </label>
                 <label className="text-xs text-zinc-700">
@@ -1039,7 +1045,7 @@ export default function AppPage() {
                     value={minCost}
                     onChange={(e) => setMinCost(Number(e.target.value))}
                     type="number"
-                    className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
+                    className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                   />
                 </label>
               </div>
@@ -1059,7 +1065,7 @@ export default function AppPage() {
                 step="0.01"
                 min="0"
                 max="1"
-                className="mt-3 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
+                className="mt-3 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
               />
             </div>
 
@@ -1074,7 +1080,7 @@ export default function AppPage() {
                   value={brandTerms}
                   onChange={(e) => setBrandTerms(e.target.value)}
                   placeholder="e.g. ihasco, termtidy"
-                  className="mt-1 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
+                  className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 />
               </label>
 
@@ -1100,10 +1106,10 @@ export default function AppPage() {
                 onClick={runAudit}
                 disabled={disableRun}
                 className={[
-                  "inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold transition",
+                  "inline-flex items-center justify-center rounded-md px-5 py-2.5 text-sm font-semibold transition border",
                   disableRun
-                    ? "bg-zinc-300 text-zinc-600"
-                    : "bg-zinc-900 text-white hover:bg-zinc-800",
+                    ? "border-slate-200 bg-slate-100 text-slate-500"
+                    : "border-blue-600 bg-blue-600 text-white hover:bg-blue-700",
                 ].join(" ")}
               >
                 {uploading ? "Uploading…" : loading ? "Working…" : "Run audit"}
@@ -1115,10 +1121,10 @@ export default function AppPage() {
                 }
                 disabled={disableRun || results.length === 0}
                 className={[
-                  "inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold transition",
+                  "inline-flex items-center justify-center rounded-md px-5 py-2.5 text-sm font-semibold transition border",
                   disableRun || results.length === 0
-                    ? "border border-zinc-200 bg-white text-zinc-400"
-                    : "border border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-50",
+                    ? "border-slate-200 bg-white text-slate-400"
+                    : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50",
                 ].join(" ")}
               >
                 Download CSV
@@ -1127,7 +1133,7 @@ export default function AppPage() {
               {loading && jobId ? (
                 <button
                   onClick={cancelJob}
-                  className="inline-flex items-center justify-center rounded-xl border border-zinc-200 bg-white px-5 py-3 text-sm font-semibold text-zinc-900 hover:bg-zinc-50"
+                  className="inline-flex items-center justify-center rounded-md border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-900 hover:bg-slate-50"
                 >
                   Cancel
                 </button>
@@ -1246,7 +1252,7 @@ export default function AppPage() {
                 <select
                   value={campaignFilter}
                   onChange={(e) => setCampaignFilter(e.target.value)}
-                  className="mt-1 block w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm"
+                  className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 >
                   <option value="ALL">All campaigns</option>
                   {campaigns.map((c) => (
@@ -1283,8 +1289,8 @@ export default function AppPage() {
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
-                <thead className="text-xs text-zinc-600">
-                  <tr className="border-b border-zinc-200">
+                <thead className="text-xs text-slate-600 sticky top-0 bg-white z-10">
+                  <tr className="border-b border-slate-200">
                     <th className="py-2 text-left">Search term</th>
                     <th className="py-2 text-left">Campaign</th>
                     <th className="py-2 text-left">Ad group</th>
@@ -1294,7 +1300,7 @@ export default function AppPage() {
                 </thead>
                 <tbody>
                   {top5.map((r, i) => (
-                    <tr key={i} className="border-b border-zinc-100">
+                    <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                       <td className="py-2 pr-4">{r.search_term ?? ""}</td>
                       <td className="py-2 pr-4">{r.campaign ?? ""}</td>
                       <td className="py-2 pr-4">{r.ad_group ?? ""}</td>
@@ -1316,8 +1322,8 @@ export default function AppPage() {
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
-                <thead className="text-xs text-zinc-600">
-                  <tr className="border-b border-zinc-200">
+                <thead className="text-xs text-slate-600 sticky top-0 bg-white z-10">
+                  <tr className="border-b border-slate-200">
                     <th className="py-2 text-left">Negative (exact)</th>
                     <th className="py-2 text-left">Search term</th>
                     <th className="py-2 text-left">Campaign</th>
@@ -1331,7 +1337,7 @@ export default function AppPage() {
                 </thead>
                 <tbody>
                   {results.map((r, i) => (
-                    <tr key={i} className="border-b border-zinc-100">
+                    <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                       <td className="py-2 pr-4 font-medium">
                         {r.suggested_negative ?? ""}
                       </td>

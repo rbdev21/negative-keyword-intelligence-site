@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { ProgressBar } from "@/components/ui/progress";
 
 type Usage = {
   ok: boolean;
@@ -50,11 +53,13 @@ export default function UsagePanel({ compact = false }: { compact?: boolean }) {
 
   if (loading) {
     return (
-      <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-        <div className="h-4 w-40 animate-pulse rounded bg-zinc-100" />
-        <div className="mt-3 h-2 w-full animate-pulse rounded bg-zinc-100" />
-        <div className="mt-3 h-4 w-56 animate-pulse rounded bg-zinc-100" />
-      </div>
+      <Card>
+        <CardContent>
+          <div className="h-4 w-40 animate-pulse rounded bg-slate-100" />
+          <div className="mt-3 h-2 w-full animate-pulse rounded bg-slate-100" />
+          <div className="mt-3 h-4 w-56 animate-pulse rounded bg-slate-100" />
+        </CardContent>
+      </Card>
     );
   }
 
@@ -63,66 +68,40 @@ export default function UsagePanel({ compact = false }: { compact?: boolean }) {
   const warn = pct >= 80;
 
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-4">
+    <Card>
+      <CardHeader className="flex flex-row items-start justify-between gap-4">
         <div>
-          <p className="text-sm font-semibold text-zinc-900">
-            Usage this month
-            <span className="ml-2 text-xs font-medium text-zinc-500">
-              ({usage.month_start})
-            </span>
-          </p>
-
+          <CardTitle>Usage overview</CardTitle>
           {!compact && (
-            <p className="mt-1 text-sm text-zinc-600">
-              You’ve used{" "}
-              <span className="font-semibold text-zinc-900">
-                {formatNumber(usage.used)}
-              </span>{" "}
-              of{" "}
-              <span className="font-semibold text-zinc-900">
-                {formatNumber(usage.quota)}
-              </span>{" "}
-              search terms.
+            <p className="mt-1 text-sm text-slate-600">
+              Credits used this reporting window ({usage.month_start}).
             </p>
           )}
         </div>
-
-        <Link
-          href="/account"
-          className="shrink-0 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold text-zinc-900 hover:bg-zinc-50"
-        >
-          Manage
+        <Link href="/account">
+          <Button variant="secondary" size="sm">
+            Manage
+          </Button>
         </Link>
-      </div>
-
-      <div className="mt-3">
-        <div className="h-2 w-full rounded-full bg-zinc-100">
-          <div
-            className={[
-              "h-2 rounded-full transition-all",
-              warn ? "bg-amber-500" : "bg-zinc-900",
-            ].join(" ")}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-        <div className="mt-2 flex items-center justify-between text-xs text-zinc-600">
+      </CardHeader>
+      <CardContent>
+        <ProgressBar value={pct} />
+        <div className="mt-2 flex items-center justify-between text-xs text-slate-600">
           <span>{pct}% used</span>
           <span>
             Remaining{" "}
-            <span className="font-semibold text-zinc-900">
+            <span className="font-semibold text-slate-900">
               {formatNumber(usage.remaining)}
             </span>
           </span>
         </div>
 
         {warn ? (
-          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-            You’re running low. You’ll be able to buy top-up credits inside the
-            app.
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            You’re running low. Buy a credit pack to continue running audits.
           </div>
         ) : null}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
